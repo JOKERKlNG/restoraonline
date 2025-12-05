@@ -311,27 +311,53 @@ async function loadReservations() {
   if (raw) {
     try {
       local = JSON.parse(raw) || [];
+      if (!Array.isArray(local)) {
+        local = [];
+      }
     } catch {
       local = [];
     }
   }
 
-  // 2) Background refresh from backend (no need to await)
+  // 2) Background refresh from backend - use backend as source of truth for deletions
   apiGet("/reservations", () => null).then((serverData) => {
     if (Array.isArray(serverData)) {
+      // Backend is source of truth - sync deletions
       localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(serverData));
       // If admin view is visible, re-render with fresh data
       if (isAdmin()) {
         renderAdminReservations();
       }
     }
+  }).catch(err => {
+    console.warn("Reservation sync failed (using local data):", err);
   });
 
   return local;
 }
 
 async function saveReservation(reservation) {
-  await apiPost("/reservations", reservation, () => null);
+  // Save to backend first for multi-device sync
+  await apiPost("/reservations", reservation, () => {
+    console.warn("Backend reservation save failed");
+    return null;
+  });
+  
+  // Also save to local storage for reliability
+  const saved = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
+  let local = [];
+  if (saved) {
+    try {
+      local = JSON.parse(saved) || [];
+      if (!Array.isArray(local)) {
+        local = [];
+      }
+    } catch {
+      local = [];
+    }
+  }
+  local.push(reservation);
+  localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(local));
 }
 
 // Initialize - hide manage button by default, then check admin status
@@ -370,6 +396,87 @@ try {
 
   // Also check immediately
   checkAdminStatus();
+  
+  // Set up periodic sync for all features (every 5 seconds) to catch changes from other devices
+  setInterval(() => {
+    // Sync reviews
+    loadReviews().then(() => {
+      renderReviews();
+      renderMenu();
+    }).catch(err => {
+      console.warn("Periodic review sync failed:", err);
+    });
+    
+    // Sync reservations (if admin)
+    if (isAdmin()) {
+      loadReservations().then(() => {
+        renderAdminReservations();
+      }).catch(err => {
+        console.warn("Periodic reservation sync failed:", err);
+      });
+    }
+    
+    // Sync menu
+    loadMenu().then((menuData) => {
+      state.menu = menuData;
+      renderMenu();
+    }).catch(err => {
+      console.warn("Periodic menu sync failed:", err);
+    });
+  }, 5000);
+  
+  // Sync when page becomes visible (user switches back to tab)
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      // Page became visible - sync all data
+      loadReviews().then(() => {
+        renderReviews();
+        renderMenu();
+      }).catch(err => {
+        console.warn("Visibility change review sync failed:", err);
+      });
+      
+      if (isAdmin()) {
+        loadReservations().then(() => {
+          renderAdminReservations();
+        }).catch(err => {
+          console.warn("Visibility change reservation sync failed:", err);
+        });
+      }
+      
+      loadMenu().then((menuData) => {
+        state.menu = menuData;
+        renderMenu();
+      }).catch(err => {
+        console.warn("Visibility change menu sync failed:", err);
+      });
+    }
+  });
+  
+  // Sync when window gains focus
+  window.addEventListener("focus", () => {
+    loadReviews().then(() => {
+      renderReviews();
+      renderMenu();
+    }).catch(err => {
+      console.warn("Focus review sync failed:", err);
+    });
+    
+    if (isAdmin()) {
+      loadReservations().then(() => {
+        renderAdminReservations();
+      }).catch(err => {
+        console.warn("Focus reservation sync failed:", err);
+      });
+    }
+    
+    loadMenu().then((menuData) => {
+      state.menu = menuData;
+      renderMenu();
+    }).catch(err => {
+      console.warn("Focus menu sync failed:", err);
+    });
+  });
 })();
 
 els.manageBtn.addEventListener("click", () => openModal());
@@ -692,12 +799,16 @@ async function loadMenu() {
   }
 
   // 2) Background refresh from backend to keep devices in sync
+  // Backend is source of truth for menu items
   apiGet("/menu", () => null).then((serverMenu) => {
-    if (Array.isArray(serverMenu) && serverMenu.length) {
-      state.menu = serverMenu;
+    if (Array.isArray(serverMenu)) {
+      // Use backend as source of truth - sync deletions and additions
       localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(serverMenu));
+      state.menu = serverMenu;
       renderMenu();
     }
+  }).catch(err => {
+    console.warn("Menu sync failed (using local data):", err);
   });
 
   return local;
@@ -1098,6 +1209,13 @@ async function clearAllReservations() {
 }
 
 async function updateReservationStatus(id, status) {
+  // Update backend first for multi-device sync
+  await apiPatch(`/reservations?id=${encodeURIComponent(id)}`, { status }, () => {
+    console.warn("Backend reservation update failed");
+    return null;
+  });
+  
+  // Then update local storage
   const reservations = await loadReservations();
   const idx = reservations.findIndex((r) => r.id === id);
   if (idx === -1) return;
@@ -1106,8 +1224,15 @@ async function updateReservationStatus(id, status) {
     ...reservations[idx],
     status,
   };
-  await apiPatch(`/reservations?id=${encodeURIComponent(id)}`, { status }, () => null);
-  await saveReservations(reservations);
+  localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(reservations));
+  
+  // Refresh from backend to ensure sync
+  setTimeout(() => {
+    loadReservations().then(() => {
+      renderAdminReservations();
+    });
+  }, 300);
+  
   renderAdminReservations();
 }
 
@@ -1263,34 +1388,52 @@ async function loadReviews() {
     }
   }
 
-  // Background sync: merge backend data with local (don't replace, merge)
-  // This happens in background and doesn't block the UI
+  // Background sync: Use backend as source of truth for deletions
+  // Backend has the authoritative list - sync deletions and additions
   apiGet("/reviews", () => null).then((backendReviews) => {
-    if (Array.isArray(backendReviews) && backendReviews.length > 0) {
-      // Merge strategy: combine local and backend, keep all unique reviews
-      const localMap = new Map(local.map(r => [r.id, r]));
+    if (Array.isArray(backendReviews)) {
+      // Backend is source of truth - use it to sync deletions
+      // Create a map of backend review IDs
+      const backendIds = new Set(backendReviews.map(r => r.id));
       
-      // Add backend reviews that don't exist locally
-      backendReviews.forEach(backendReview => {
-        if (!localMap.has(backendReview.id)) {
-          localMap.set(backendReview.id, backendReview);
+      // Start with backend reviews (authoritative)
+      const merged = [...backendReviews];
+      
+      // Add any local reviews that don't exist in backend (pending sync)
+      const localMap = new Map(local.map(r => [r.id, r]));
+      local.forEach(localReview => {
+        if (!backendIds.has(localReview.id)) {
+          // This review exists locally but not in backend - might be pending sync
+          // But if backend is working, it means it was deleted, so we trust backend
+          // Only keep if it's very recent (within last 10 seconds) - might be pending
+          const isRecent = localReview.timestamp && (Date.now() - localReview.timestamp < 10000);
+          if (isRecent) {
+            merged.push(localReview);
+          }
         }
       });
       
-      // Convert back to array and sort by timestamp
-      const merged = Array.from(localMap.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      // Sort by timestamp
+      merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       
-      // Only update if we got new reviews from backend
-      if (merged.length > local.length) {
-        localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(merged));
-        // Re-render with merged data
+      // Always update localStorage with backend data (handles deletions)
+      localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(merged));
+      
+      // Re-render if data changed
+      const localIds = new Set(local.map(r => r.id));
+      const mergedIds = new Set(merged.map(r => r.id));
+      const changed = local.length !== merged.length || 
+                     ![...localIds].every(id => mergedIds.has(id)) ||
+                     ![...mergedIds].every(id => localIds.has(id));
+      
+      if (changed) {
         renderReviews();
         renderMenu();
       }
     }
   }).catch(err => {
-    // Silently fail - we don't care if backend is slow, localStorage is our source
-    console.warn("Background review sync failed (this is OK):", err);
+    // If backend fails, keep using local data
+    console.warn("Background review sync failed (using local data):", err);
   });
 
   return local;
@@ -1315,16 +1458,22 @@ async function saveReviews(reviews) {
     return;
   }
   
-  // Then try to sync to backend in background (non-blocking)
-  // If this fails, it's OK - localStorage has the data
+  // Sync to backend - ensure it completes for proper multi-device sync
   const last = reviews[reviews.length - 1];
   if (last) {
-    // Don't await - let it happen in background
     apiPost("/reviews", last, () => {
       console.warn("Backend sync failed, but review is saved locally");
       return null;
+    }).then(() => {
+      console.log("Review synced to backend successfully");
+      // After successful sync, refresh from backend to get any updates
+      setTimeout(() => {
+        loadReviews().then(() => {
+          renderReviews();
+          renderMenu();
+        });
+      }, 300);
     }).catch(err => {
-      // Silently fail - localStorage already has the data
       console.warn("Background backend sync failed (review is still saved locally):", err);
     });
   }
@@ -1561,10 +1710,19 @@ async function deleteReview(id) {
     return;
   }
   
-  // Try to sync deletion to backend in background (non-blocking)
+  // Sync deletion to backend - wait for it to complete to ensure sync
   apiDelete(`/reviews?id=${encodeURIComponent(id)}`, () => {
     console.warn("Backend deletion sync failed, but review is deleted locally");
     return null;
+  }).then(() => {
+    console.log("Review deletion synced to backend successfully");
+    // After successful deletion, trigger a sync to update from backend
+    setTimeout(() => {
+      loadReviews().then(() => {
+        renderReviews();
+        renderMenu();
+      });
+    }, 500);
   }).catch(err => {
     console.warn("Background backend deletion sync failed (review is still deleted locally):", err);
   });
