@@ -39,6 +39,8 @@
         </div>
         <div class="hero-actions">
           <button id="manageMenuBtn" class="btn primary">Manage Menu</button>
+          <button id="reserveTableBtn" class="btn primary">Reserve Table</button>
+          <button id="viewReservationsBtn" class="btn ghost" style="display: none;">View Reservations</button>
           <a href="about.html" class="btn ghost">About Us</a>
         </div>
       </div>
@@ -241,6 +243,50 @@
             <button type="submit" class="btn primary">Save Changes</button>
           </div>
         </form>
+      </div>
+    </section>
+
+    <section id="reservationModal" class="modal hidden">
+      <div class="modal-content reservation-modal">
+        <header>
+          <h3>Reserve a Table</h3>
+          <button id="closeReservationModalBtn" class="icon-btn" aria-label="Close reservation modal">✕</button>
+        </header>
+        <form id="reservationForm">
+          <label>
+            Name
+            <input type="text" id="reservationName" placeholder="Enter your full name" required />
+          </label>
+          <label>
+            Time
+            <input type="time" id="reservationTime" required />
+          </label>
+          <label>
+            Number of Guests
+            <input type="number" id="reservationGuests" min="1" max="20" placeholder="Number of guests" required />
+          </label>
+          <label>
+            Special Requests
+            <textarea id="reservationRequests" rows="4" placeholder="Any special requests or dietary requirements..."></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="button" id="cancelReservationBtn" class="btn ghost">Cancel</button>
+            <button type="submit" class="btn primary">Reserve Table</button>
+          </div>
+          <p id="reservationMessage" class="reservation-message hidden"></p>
+        </form>
+      </div>
+    </section>
+
+    <section id="adminReservationsModal" class="modal hidden">
+      <div class="modal-content admin-reservations-modal">
+        <header>
+          <h3>Reservations</h3>
+          <button id="closeAdminReservationsModalBtn" class="icon-btn" aria-label="Close reservations modal">✕</button>
+        </header>
+        <div id="adminReservationsList" class="admin-reservations-list">
+          <p class="empty-state">No reservations yet.</p>
+        </div>
       </div>
     </section>
 

@@ -2,6 +2,7 @@ const STORAGE_KEYS = {
   // Kept for graceful fallback if backend is not reachable
   MENU: "restora_menu",
   REVIEWS: "restora_reviews",
+  RESERVATIONS: "restora_reservations",
 };
 
 // Use a relative API base so it works from any host (localhost or LAN IP)
@@ -205,6 +206,21 @@ const els = {
   profileAvatarInitials: document.querySelector("#profileAvatarInitials"),
   profileCancelBtn: document.querySelector("#profileCancelBtn"),
   closeProfileModalBtn: document.querySelector("#closeProfileModalBtn"),
+  // Reservations
+  reserveTableBtn: document.querySelector("#reserveTableBtn"),
+  viewReservationsBtn: document.querySelector("#viewReservationsBtn"),
+  reservationModal: document.querySelector("#reservationModal"),
+  closeReservationModalBtn: document.querySelector("#closeReservationModalBtn"),
+  reservationForm: document.querySelector("#reservationForm"),
+  reservationName: document.querySelector("#reservationName"),
+  reservationTime: document.querySelector("#reservationTime"),
+  reservationGuests: document.querySelector("#reservationGuests"),
+  reservationRequests: document.querySelector("#reservationRequests"),
+  reservationMessage: document.querySelector("#reservationMessage"),
+  cancelReservationBtn: document.querySelector("#cancelReservationBtn"),
+  adminReservationsModal: document.querySelector("#adminReservationsModal"),
+  closeAdminReservationsModalBtn: document.querySelector("#closeAdminReservationsModalBtn"),
+  adminReservationsList: document.querySelector("#adminReservationsList"),
 };
 
 const printRoot = document.createElement("div");
@@ -636,6 +652,87 @@ els.printBillBtn.addEventListener("click", () => {
   window.print();
 });
 
+// Reservation event listeners
+if (els.reserveTableBtn) {
+  els.reserveTableBtn.addEventListener("click", openReservationModal);
+}
+
+if (els.closeReservationModalBtn) {
+  els.closeReservationModalBtn.addEventListener("click", closeReservationModal);
+}
+
+if (els.cancelReservationBtn) {
+  els.cancelReservationBtn.addEventListener("click", closeReservationModal);
+}
+
+if (els.reservationModal) {
+  els.reservationModal.addEventListener("click", (evt) => {
+    if (evt.target === els.reservationModal) {
+      closeReservationModal();
+    }
+  });
+}
+
+if (els.reservationForm) {
+  els.reservationForm.addEventListener("submit", async (evt) => {
+    evt.preventDefault();
+    if (!els.reservationName || !els.reservationTime || !els.reservationGuests) {
+      alert("Please fill in all required fields.");
+      return;
+    }
+
+    const user = getCurrentUser();
+    const reservation = {
+      id: createId(),
+      name: els.reservationName.value.trim(),
+      time: els.reservationTime.value,
+      guests: Number(els.reservationGuests.value || 0),
+      requests: els.reservationRequests ? els.reservationRequests.value.trim() : "",
+      userEmail: user?.email || null,
+      createdAt: Date.now(),
+    };
+
+    if (!reservation.name || !reservation.time || !reservation.guests) {
+      alert("Please fill in all required fields.");
+      return;
+    }
+
+    await saveReservation(reservation);
+
+    if (els.reservationMessage) {
+      els.reservationMessage.textContent = "Your table has been reserved successfully!";
+      els.reservationMessage.classList.remove("hidden");
+    }
+
+    // Reset form but keep name
+    const nameValue = els.reservationName.value;
+    els.reservationForm.reset();
+    els.reservationName.value = nameValue;
+
+    // Close modal after 2 seconds
+    setTimeout(() => {
+      closeReservationModal();
+    }, 2000);
+  });
+}
+
+// Admin reservations event listeners
+if (els.viewReservationsBtn) {
+  els.viewReservationsBtn.addEventListener("click", openAdminReservationsModal);
+}
+
+if (els.closeAdminReservationsModalBtn) {
+  els.closeAdminReservationsModalBtn.addEventListener("click", closeAdminReservationsModal);
+}
+
+if (els.adminReservationsModal) {
+  els.adminReservationsModal.addEventListener("click", (evt) => {
+    if (evt.target === els.adminReservationsModal) {
+      closeAdminReservationsModal();
+    }
+  });
+}
+
 async function loadMenu() {
   // 1) Instant local/default menu
   let local = [];
@@ -956,6 +1053,144 @@ function populatePrintArea(entries, total) {
 }
 
 
+// Reservation functions
+async function loadReservations() {
+  const raw = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
+  let local = [];
+  if (raw) {
+    try {
+      local = JSON.parse(raw) || [];
+      if (!Array.isArray(local)) {
+        local = [];
+      }
+    } catch {
+      local = [];
+    }
+  }
+
+  // Background refresh from backend
+  apiGet("/reservations", () => null).then((serverData) => {
+    if (Array.isArray(serverData)) {
+      localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(serverData));
+      if (isAdmin() && els.adminReservationsModal && !els.adminReservationsModal.classList.contains("hidden")) {
+        renderAdminReservations();
+      }
+    }
+  }).catch(err => {
+    console.warn("Reservation sync failed (using local data):", err);
+  });
+
+  return local;
+}
+
+async function saveReservation(reservation) {
+  // Save to backend first
+  await apiPost("/reservations", reservation, () => {
+    console.warn("Backend reservation save failed");
+    return null;
+  });
+  
+  // Also save to local storage
+  const saved = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
+  let local = [];
+  if (saved) {
+    try {
+      local = JSON.parse(saved) || [];
+      if (!Array.isArray(local)) {
+        local = [];
+      }
+    } catch {
+      local = [];
+    }
+  }
+  local.push(reservation);
+  localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(local));
+}
+
+function openReservationModal() {
+  if (!els.reservationModal || !els.reservationForm) return;
+  
+  // Prefill name from current user if available
+  const currentUser = getCurrentUser();
+  if (currentUser && els.reservationName) {
+    els.reservationName.value = currentUser.name || "";
+  }
+  
+  // Reset form
+  els.reservationForm.reset();
+  if (currentUser && els.reservationName) {
+    els.reservationName.value = currentUser.name || "";
+  }
+  if (els.reservationMessage) {
+    els.reservationMessage.classList.add("hidden");
+    els.reservationMessage.textContent = "";
+  }
+  
+  els.reservationModal.classList.remove("hidden");
+}
+
+function closeReservationModal() {
+  if (els.reservationModal) {
+    els.reservationModal.classList.add("hidden");
+  }
+}
+
+async function renderAdminReservations() {
+  if (!els.adminReservationsList) return;
+
+  const reservations = await loadReservations();
+  if (!reservations.length) {
+    els.adminReservationsList.innerHTML =
+      '<p class="empty-state">No reservations yet.</p>';
+    return;
+  }
+
+  const sorted = [...reservations].sort(
+    (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+  );
+
+  els.adminReservationsList.innerHTML = sorted
+    .map((res) => {
+      const created = res.createdAt
+        ? new Date(res.createdAt).toLocaleString()
+        : "–";
+      const time = res.time || "–";
+      const guests = res.guests || 0;
+      const requests = res.requests || "None";
+
+      return `
+        <article class="admin-res-card">
+          <header class="admin-res-header">
+            <div>
+              <h3>${escapeHtml(res.name || "Guest")}</h3>
+              <p>Time: ${time} · Guests: ${guests}</p>
+            </div>
+          </header>
+          <div class="admin-res-body">
+            <p><strong>Special Requests:</strong> ${escapeHtml(requests)}</p>
+            ${res.userEmail ? `<p><strong>Email:</strong> ${escapeHtml(res.userEmail)}</p>` : ""}
+          </div>
+          <footer class="admin-res-footer">
+            <span class="admin-res-created">Reserved: ${created}</span>
+          </footer>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function openAdminReservationsModal() {
+  if (!els.adminReservationsModal) return;
+  renderAdminReservations();
+  els.adminReservationsModal.classList.remove("hidden");
+}
+
+function closeAdminReservationsModal() {
+  if (els.adminReservationsModal) {
+    els.adminReservationsModal.classList.add("hidden");
+  }
+}
+
 function checkAdminStatus() {
   if (!els.manageBtn) {
     console.warn("Manage button not found");
@@ -976,20 +1211,26 @@ function checkAdminStatus() {
     console.warn("sessionStorage not available:", e);
   }
   
-  const isAdmin =
+  const isAdminUser =
     localStorageAdmin === "true" || sessionStorageAdmin === "true";
   
-  if (isAdmin) {
+  if (isAdminUser) {
     els.manageBtn.style.display = "inline-block";
     els.manageBtn.style.visibility = "visible";
     els.manageBtn.style.opacity = "1";
     if (els.manageReviewsBtn) {
       els.manageReviewsBtn.style.display = "inline-flex";
     }
+    if (els.viewReservationsBtn) {
+      els.viewReservationsBtn.style.display = "inline-block";
+    }
   } else {
     els.manageBtn.style.display = "none";
     if (els.manageReviewsBtn) {
       els.manageReviewsBtn.style.display = "none";
+    }
+    if (els.viewReservationsBtn) {
+      els.viewReservationsBtn.style.display = "none";
     }
   }
   
