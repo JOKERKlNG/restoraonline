@@ -213,6 +213,8 @@ const els = {
   closeReservationModalBtn: document.querySelector("#closeReservationModalBtn"),
   reservationForm: document.querySelector("#reservationForm"),
   reservationName: document.querySelector("#reservationName"),
+  reservationPhone: document.querySelector("#reservationPhone"),
+  reservationDate: document.querySelector("#reservationDate"),
   reservationTime: document.querySelector("#reservationTime"),
   reservationGuests: document.querySelector("#reservationGuests"),
   reservationRequests: document.querySelector("#reservationRequests"),
@@ -676,7 +678,7 @@ if (els.reservationModal) {
 if (els.reservationForm) {
   els.reservationForm.addEventListener("submit", async (evt) => {
     evt.preventDefault();
-    if (!els.reservationName || !els.reservationTime || !els.reservationGuests) {
+    if (!els.reservationName || !els.reservationPhone || !els.reservationDate || !els.reservationTime || !els.reservationGuests) {
       alert("Please fill in all required fields.");
       return;
     }
@@ -685,18 +687,23 @@ if (els.reservationForm) {
     const reservation = {
       id: createId(),
       name: els.reservationName.value.trim(),
+      phone: els.reservationPhone.value.trim(),
+      date: els.reservationDate.value,
       time: els.reservationTime.value,
       guests: Number(els.reservationGuests.value || 0),
-      requests: els.reservationRequests ? els.reservationRequests.value.trim() : "",
+      notes: els.reservationRequests ? els.reservationRequests.value.trim() : "",
+      requests: els.reservationRequests ? els.reservationRequests.value.trim() : "", // Keep for display
       userEmail: user?.email || null,
       createdAt: Date.now(),
+      status: "pending",
     };
 
-    if (!reservation.name || !reservation.time || !reservation.guests) {
+    if (!reservation.name || !reservation.phone || !reservation.date || !reservation.time || !reservation.guests) {
       alert("Please fill in all required fields.");
       return;
     }
 
+    // Save locally first (immediate)
     await saveReservation(reservation);
 
     // Refresh admin reservations list if admin modal is open
@@ -1060,6 +1067,7 @@ function populatePrintArea(entries, total) {
 
 // Reservation functions
 async function loadReservations() {
+  // Always return local data first (local-first approach)
   const raw = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
   let local = [];
   if (raw) {
@@ -1073,10 +1081,31 @@ async function loadReservations() {
     }
   }
 
-  // Background refresh from backend
+  // Background sync from backend - merge intelligently (don't overwrite local)
   apiGet("/reservations", () => null).then((serverData) => {
-    if (Array.isArray(serverData)) {
-      localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(serverData));
+    if (Array.isArray(serverData) && serverData.length > 0) {
+      // Merge: combine local and server data, preferring server for conflicts
+      const localMap = new Map(local.map(r => [r.id, r]));
+      const serverMap = new Map(serverData.map(r => [r.id, r]));
+      
+      // Start with server data (source of truth)
+      const merged = [...serverData];
+      
+      // Add any local reservations that don't exist on server (pending sync)
+      local.forEach(localRes => {
+        if (!serverMap.has(localRes.id)) {
+          // Check if it's recent (within last 5 minutes) - might be pending sync
+          const isRecent = localRes.createdAt && (Date.now() - localRes.createdAt < 300000);
+          if (isRecent) {
+            merged.push(localRes);
+          }
+        }
+      });
+      
+      // Update localStorage with merged data
+      localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(merged));
+      
+      // Refresh admin view if open
       if (isAdmin() && els.adminReservationsModal && !els.adminReservationsModal.classList.contains("hidden")) {
         renderAdminReservations();
       }
@@ -1089,7 +1118,7 @@ async function loadReservations() {
 }
 
 async function saveReservation(reservation) {
-  // Save to local storage first (for immediate availability)
+  // STEP 1: Save to local storage FIRST (immediate, reliable)
   const saved = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
   let local = [];
   if (saved) {
@@ -1102,23 +1131,45 @@ async function saveReservation(reservation) {
       local = [];
     }
   }
-  local.push(reservation);
-  localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(local));
   
-  // Then try to save to backend (non-blocking)
-  apiPost("/reservations", reservation, () => {
+  // Check if reservation already exists (avoid duplicates)
+  const exists = local.some(r => r.id === reservation.id);
+  if (!exists) {
+    local.push(reservation);
+    localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(local));
+    console.log("Reservation saved locally:", reservation.id);
+  }
+  
+  // STEP 2: Sync to backend (non-blocking, background)
+  // Prepare data for backend (ensure all required fields)
+  const backendReservation = {
+    id: reservation.id,
+    name: reservation.name,
+    phone: reservation.phone || "",
+    date: reservation.date,
+    time: reservation.time,
+    guests: reservation.guests,
+    notes: reservation.notes || reservation.requests || "",
+    userEmail: reservation.userEmail || null,
+  };
+  
+  apiPost("/reservations", backendReservation, () => {
     console.warn("Backend reservation save failed, but saved locally");
     return null;
-  }).then(() => {
-    // Refresh from backend to get the updated list
-    loadReservations().then(() => {
-      // Refresh admin view if it's open
-      if (isAdmin() && els.adminReservationsModal && !els.adminReservationsModal.classList.contains("hidden")) {
-        renderAdminReservations();
-      }
-    });
+  }).then((savedReservation) => {
+    console.log("Reservation synced to backend:", savedReservation?.id || reservation.id);
+    // After successful backend save, refresh from backend to get server confirmation
+    setTimeout(() => {
+      loadReservations().then(() => {
+        // Refresh admin view if it's open
+        if (isAdmin() && els.adminReservationsModal && !els.adminReservationsModal.classList.contains("hidden")) {
+          renderAdminReservations();
+        }
+      });
+    }, 500);
   }).catch(err => {
     console.warn("Backend sync failed, but reservation is saved locally:", err);
+    // Reservation is still available locally, so it will show up
   });
 }
 
@@ -1131,10 +1182,22 @@ function openReservationModal() {
     els.reservationName.value = currentUser.name || "";
   }
   
+  // Set default date to today
+  if (els.reservationDate) {
+    const today = new Date().toISOString().split('T')[0];
+    els.reservationDate.value = today;
+    els.reservationDate.min = today; // Prevent selecting past dates
+  }
+  
   // Reset form
   els.reservationForm.reset();
   if (currentUser && els.reservationName) {
     els.reservationName.value = currentUser.name || "";
+  }
+  if (els.reservationDate) {
+    const today = new Date().toISOString().split('T')[0];
+    els.reservationDate.value = today;
+    els.reservationDate.min = today;
   }
   if (els.reservationMessage) {
     els.reservationMessage.classList.add("hidden");
@@ -1153,7 +1216,7 @@ function closeReservationModal() {
 async function renderAdminReservations() {
   if (!els.adminReservationsList) return;
 
-  // Load fresh data from localStorage (most up-to-date)
+  // Load fresh data from localStorage (local-first, most up-to-date)
   const raw = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
   let reservations = [];
   if (raw) {
@@ -1162,15 +1225,18 @@ async function renderAdminReservations() {
       if (!Array.isArray(reservations)) {
         reservations = [];
       }
-    } catch {
+    } catch (e) {
+      console.error("Failed to parse reservations:", e);
       reservations = [];
     }
   }
 
-  // Also trigger background sync from backend
+  // Trigger background sync from backend (non-blocking)
   loadReservations().catch(err => {
     console.warn("Background reservation sync failed:", err);
   });
+
+  console.log("Rendering reservations:", reservations.length, "found");
 
   if (!reservations.length) {
     els.adminReservationsList.innerHTML =
@@ -1187,8 +1253,10 @@ async function renderAdminReservations() {
       const created = res.createdAt
         ? new Date(res.createdAt).toLocaleString()
         : "–";
+      const date = res.date || "–";
       const time = res.time || "–";
       const guests = res.guests || 0;
+      const phone = res.phone || "Not provided";
       const requests = res.requests || res.notes || "None";
 
       return `
@@ -1196,10 +1264,11 @@ async function renderAdminReservations() {
           <header class="admin-res-header">
             <div>
               <h3>${escapeHtml(res.name || "Guest")}</h3>
-              <p>Time: ${time} · Guests: ${guests}</p>
+              <p>Date: ${date} · Time: ${time} · Guests: ${guests}</p>
             </div>
           </header>
           <div class="admin-res-body">
+            <p><strong>Phone:</strong> ${escapeHtml(phone)}</p>
             <p><strong>Special Requests:</strong> ${escapeHtml(requests)}</p>
             ${res.userEmail ? `<p><strong>Email:</strong> ${escapeHtml(res.userEmail)}</p>` : ""}
           </div>
