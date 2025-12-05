@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Restora - French Premium Restaurant</title>
+    <!-- Bootstrap 5 CSS (for responsive grid, spacing utilities, and form styling) -->
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+      crossorigin="anonymous"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="hero container-lg d-flex flex-column flex-lg-row align-items-center justify-content-between gap-4">
+      <div class="hero-copy">
+        <p class="hero-pill">French Premium Dining</p>
+        <h1>RESTORA</h1>
+        <p>Where French elegance meets unforgettable flavour.</p>
+        <div class="hero-meta">
+          <span>French Fine Dining · Since 1938</span>
+        </div>
+        <div class="user-strip" id="userStrip">
+          <div class="user-avatar-circle" id="userAvatarCircle">
+            <span id="userAvatarInitials">R</span>
+          </div>
+          <div class="user-text">
+            <span class="user-greeting" id="userGreeting">Welcome to Restora</span>
+            <span class="user-name" id="userNameDisplay"></span>
+          </div>
+          <button id="openProfileBtn" class="btn ghost small-btn">Profile</button>
+        <button id="logoutBtn" class="btn ghost small-btn">Logout</button>
+        </div>
+        <div class="hero-meta hero-meta-secondary">
+          <span>⭐️⭐️⭐️⭐️⭐️ Rated</span>
+          <span>Open 11 AM – 10 PM</span>
+        </div>
+        <div class="hero-actions">
+          <button id="manageMenuBtn" class="btn primary">Manage Menu</button>
+          <a href="about.html" class="btn ghost">About Us</a>
+        </div>
+      </div>
+      <div class="hero-gallery">
+        <img
+          src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=500&q=80"
+          alt="French restaurant interior"
+        />
+        <img
+          src="https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=500&q=80"
+          alt="French fine dining"
+        />
+      </div>
+    </header>
+
+    <main class="layout container-lg">
+      <section class="panel menu-panel">
+        <h2>Menu</h2>
+        <div id="menuList" class="menu-grid"></div>
+      </section>
+
+      <section class="panel cart-panel">
+        <h2>Cart & Bill</h2>
+        <div id="cartEmptyState" class="empty-state">Cart is empty</div>
+        <div id="cartList"></div>
+
+        <div class="bill-summary">
+          <div class="bill-row">
+            <span>Subtotal</span>
+            <strong id="billSubtotal">₹0.00</strong>
+          </div>
+          <div class="bill-row">
+            <span>Tax (5%)</span>
+            <strong id="billTax">₹0.00</strong>
+          </div>
+          <div class="bill-row total">
+            <span>Total</span>
+            <strong id="billTotal">₹0.00</strong>
+          </div>
+        </div>
+
+        <div class="cart-actions">
+          <button id="clearCartBtn" class="btn ghost">Clear Cart</button>
+          <button id="payNowBtn" class="btn primary">Pay Now</button>
+        </div>
+
+        <div id="paymentArea" class="payment-area hidden">
+          <h3>Payment & Bill</h3>
+          <p class="payment-helper">
+            Scan the QR below to complete your payment, then print a copy of your detailed bill.
+          </p>
+          <div class="payment-content">
+            <div class="payment-qr-block">
+              <span class="payment-label">Scan to Pay</span>
+              <img
+                id="qrImage"
+                src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=Restora%20Payment"
+                alt="QR Code"
+              />
+            </div>
+            <div class="payment-actions">
+              <span class="payment-label">Need a copy?</span>
+              <p class="payment-note">Click below to open a printer‑friendly bill with all ordered items.</p>
+              <button id="printBillBtn" class="btn ghost full-width">Print Bill</button>
+            </div>
+          </div>
+          <button id="writeReviewBtn" class="btn primary full-width">Write a Review</button>
+        </div>
+      </section>
+
+    </main>
+
+    <section id="adminReservationsPanel" class="panel admin-reservations-panel container-lg">
+      <h2>Admin · Reservations</h2>
+      <p class="admin-res-intro">
+        Private view for Restora staff. Review, confirm or reject upcoming reservations with one click.
+      </p>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-muted small">Today’s reservations overview</span>
+        <button id="clearReservationsBtn" class="btn ghost small-btn">Clear All Reservations</button>
+      </div>
+      <div id="adminReservationsList" class="admin-reservations-list">
+        <p class="empty-state">No reservations received yet.</p>
+      </div>
+    </section>
+
+    <section class="panel reservation-panel container-lg">
+      <h2>Reserve a Table</h2>
+      <p class="reservation-intro">
+        Plan your perfect visit to Restora. Share your details and we’ll hold a table for you with our premium service.
+      </p>
+      <form id="reservationForm">
+        <div class="reservation-grid">
+          <label>
+            Full Name
+            <input type="text" id="resName" required placeholder="Your full name" />
+          </label>
+          <label>
+            Phone Number
+            <input type="tel" id="resPhone" required placeholder="Phone number" />
+          </label>
+          <label>
+            Number of Guests
+            <input type="number" id="resGuests" min="1" max="20" required />
+          </label>
+          <label>
+            Date
+            <input type="date" id="resDate" required />
+          </label>
+          <label>
+            Time
+            <input type="time" id="resTime" required />
+          </label>
+          <label>
+            Occasion (optional)
+            <input type="text" id="resOccasion" placeholder="Birthday, Anniversary, Business..." />
+          </label>
+        </div>
+        <label>
+          Special Requests
+          <textarea id="resNotes" rows="3" placeholder="Allergies, seating preference, surprise setup..."></textarea>
+        </label>
+        <div class="reservation-actions">
+          <button type="submit" class="btn primary">Reserve Table</button>
+        </div>
+        <p id="reservationMessage" class="reservation-message hidden"></p>
+      </form>
+    </section>
+
+    <section class="panel reviews-panel container-lg">
+        <div class="reviews-header">
+          <h2>Reviews & Ratings</h2>
+          <button id="manageReviewsBtn" class="btn ghost">Manage Reviews</button>
+        </div>
+        <div id="reviewsList" class="reviews-list"></div>
+        <div id="reviewsEmptyState" class="empty-state">No reviews yet. Be the first to review!</div>
+      </section>
+
+    <section id="manageModal" class="modal hidden">
+      <div class="modal-content">
+        <header>
+          <h3>Manage Menu Item</h3>
+          <button id="closeModalBtn" class="icon-btn" aria-label="Close modal">
+            ✕
+          </button>
+        </header>
+
+        <form id="menuForm">
+          <input type="hidden" id="itemId" />
+          <label>
+            Name
+            <input type="text" id="itemName" required />
+          </label>
+          <label>
+            Price (₹)
+            <input type="number" id="itemPrice" min="1" step="1" required />
+          </label>
+          <label>
+            Image URL
+            <input type="url" id="itemImage" placeholder="https://..." />
+          </label>
+          <label>
+            Category
+            <input type="text" id="itemCategory" placeholder="Breakfast" />
+          </label>
+          <div class="form-actions">
+            <button type="button" id="deleteItemBtn" class="btn ghost">
+              Delete
+            </button>
+            <button type="submit" class="btn primary">Save Item</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="reviewModal" class="modal hidden">
+      <div class="modal-content">
+        <header>
+          <h3>Write a Review</h3>
+          <button id="closeReviewModalBtn" class="icon-btn" aria-label="Close modal">
+            ✕
+          </button>
+        </header>
+
+        <form id="reviewForm">
+          <label>
+            Select Food Item
+            <select id="reviewItemId" required>
+              <option value="">Choose an item...</option>
+            </select>
+          </label>
+          <label>
+            Your Rating
+            <div class="star-rating" id="starRating">
+              <span class="star" data-rating="1">⭐</span>
+              <span class="star" data-rating="2">⭐</span>
+              <span class="star" data-rating="3">⭐</span>
+              <span class="star" data-rating="4">⭐</span>
+              <span class="star" data-rating="5">⭐</span>
+            </div>
+            <input type="hidden" id="reviewRating" value="0" required />
+          </label>
+          <label>
+            Your Name
+            <input type="text" id="reviewerName" placeholder="Enter your name" required />
+          </label>
+          <label>
+            Your Review
+            <textarea id="reviewText" rows="4" placeholder="Share your experience..." required></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="button" id="cancelReviewBtn" class="btn ghost">Cancel</button>
+            <button type="submit" class="btn primary">Submit Review</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="manageReviewsModal" class="modal hidden">
+      <div class="modal-content">
+        <header>
+          <h3>Manage Reviews</h3>
+          <button id="closeManageReviewsModalBtn" class="icon-btn" aria-label="Close manage reviews modal">
+            ✕
+          </button>
+        </header>
+        <div id="manageReviewsList" class="manage-reviews-list">
+          <p class="empty-state">No reviews to manage.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="profileModal" class="modal hidden">
+      <div class="modal-content">
+        <header>
+          <h3>Your Profile</h3>
+          <button id="closeProfileModalBtn" class="icon-btn" aria-label="Close profile modal">✕</button>
+        </header>
+        <form id="profileForm">
+          <div class="profile-preview">
+            <div class="user-avatar-circle large" id="profileAvatarCircle">
+              <span id="profileAvatarInitials">R</span>
+            </div>
+            <p id="profileEmail" class="profile-email"></p>
+          </div>
+          <label>
+            Display Name
+            <input type="text" id="profileName" required />
+          </label>
+          <label>
+            Profile Picture URL
+            <input type="url" id="profileAvatarUrl" placeholder="https://..." />
+          </label>
+          <div class="form-actions">
+            <button type="button" id="profileCancelBtn" class="btn ghost">Cancel</button>
+            <button type="submit" class="btn primary">Save Changes</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="rejectReservationModal" class="modal hidden">
+      <div class="modal-content reservation-action-modal">
+        <header>
+          <h3>Reject Reservation</h3>
+          <button id="closeRejectModalBtn" class="icon-btn" aria-label="Close reject modal">✕</button>
+        </header>
+        <div class="reservation-action-message">
+          <p>Are you sure you want to reject this reservation request? The guest will lose this held table.</p>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="cancelRejectBtn" class="btn ghost">Cancel</button>
+          <button type="button" id="confirmRejectBtn" class="btn primary">Confirm Rejection</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="approveReservationModal" class="modal hidden">
+      <div class="modal-content reservation-action-modal">
+        <header>
+          <h3>Approve Reservation</h3>
+          <button id="closeApproveModalBtn" class="icon-btn" aria-label="Close approve modal">✕</button>
+        </header>
+        <div class="reservation-action-message">
+          <p>This reservation will be confirmed and the table will be held for the guest.</p>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="cancelApproveBtn" class="btn ghost">Cancel</button>
+          <button type="button" id="confirmApproveBtn" class="btn primary">Confirm Approval</button>
+        </div>
+      </div>
+    </section>
+
+    <template id="billTemplate">
+      <div class="print-area">
+        <h2>Restora Bill</h2>
+        <p id="billTimestamp"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Qty</th>
+              <th>Price</th>
+            </tr>
+          </thead>
+          <tbody id="billItems"></tbody>
+        </table>
+        <div class="print-summary">
+          <p class="summary-line">
+            Subtotal: <strong id="billSubtotalPrint">₹0.00</strong>
+          </p>
+          <p class="summary-line">
+            Tax (5%): <strong id="billTaxPrint">₹0.00</strong>
+          </p>
+          <p class="total-line">
+            Total: <strong id="billTotalPrint">₹0.00</strong>
+          </p>
+        </div>
+      </div>
+    </template>
+
+    <!-- Bootstrap JS bundle (for any interactive components you may add later) -->
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+      integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+      crossorigin="anonymous"
+      defer
+    ></script>
+    <script src="app.js" defer></script>
+  </body>
+</html>
+
