@@ -699,6 +699,11 @@ if (els.reservationForm) {
 
     await saveReservation(reservation);
 
+    // Refresh admin reservations list if admin modal is open
+    if (isAdmin() && els.adminReservationsModal && !els.adminReservationsModal.classList.contains("hidden")) {
+      await renderAdminReservations();
+    }
+
     if (els.reservationMessage) {
       els.reservationMessage.textContent = "Your table has been reserved successfully!";
       els.reservationMessage.classList.remove("hidden");
@@ -1084,13 +1089,7 @@ async function loadReservations() {
 }
 
 async function saveReservation(reservation) {
-  // Save to backend first
-  await apiPost("/reservations", reservation, () => {
-    console.warn("Backend reservation save failed");
-    return null;
-  });
-  
-  // Also save to local storage
+  // Save to local storage first (for immediate availability)
   const saved = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
   let local = [];
   if (saved) {
@@ -1105,6 +1104,22 @@ async function saveReservation(reservation) {
   }
   local.push(reservation);
   localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(local));
+  
+  // Then try to save to backend (non-blocking)
+  apiPost("/reservations", reservation, () => {
+    console.warn("Backend reservation save failed, but saved locally");
+    return null;
+  }).then(() => {
+    // Refresh from backend to get the updated list
+    loadReservations().then(() => {
+      // Refresh admin view if it's open
+      if (isAdmin() && els.adminReservationsModal && !els.adminReservationsModal.classList.contains("hidden")) {
+        renderAdminReservations();
+      }
+    });
+  }).catch(err => {
+    console.warn("Backend sync failed, but reservation is saved locally:", err);
+  });
 }
 
 function openReservationModal() {
@@ -1138,7 +1153,25 @@ function closeReservationModal() {
 async function renderAdminReservations() {
   if (!els.adminReservationsList) return;
 
-  const reservations = await loadReservations();
+  // Load fresh data from localStorage (most up-to-date)
+  const raw = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
+  let reservations = [];
+  if (raw) {
+    try {
+      reservations = JSON.parse(raw) || [];
+      if (!Array.isArray(reservations)) {
+        reservations = [];
+      }
+    } catch {
+      reservations = [];
+    }
+  }
+
+  // Also trigger background sync from backend
+  loadReservations().catch(err => {
+    console.warn("Background reservation sync failed:", err);
+  });
+
   if (!reservations.length) {
     els.adminReservationsList.innerHTML =
       '<p class="empty-state">No reservations yet.</p>';
@@ -1156,7 +1189,7 @@ async function renderAdminReservations() {
         : "–";
       const time = res.time || "–";
       const guests = res.guests || 0;
-      const requests = res.requests || "None";
+      const requests = res.requests || res.notes || "None";
 
       return `
         <article class="admin-res-card">
@@ -1179,15 +1212,35 @@ async function renderAdminReservations() {
     .join("");
 }
 
-function openAdminReservationsModal() {
+async function openAdminReservationsModal() {
   if (!els.adminReservationsModal) return;
-  renderAdminReservations();
+  // Refresh data before opening
+  await loadReservations();
+  await renderAdminReservations();
   els.adminReservationsModal.classList.remove("hidden");
+  
+  // Set up periodic refresh while modal is open (every 3 seconds)
+  if (window.adminReservationsRefreshInterval) {
+    clearInterval(window.adminReservationsRefreshInterval);
+  }
+  window.adminReservationsRefreshInterval = setInterval(() => {
+    if (els.adminReservationsModal && !els.adminReservationsModal.classList.contains("hidden")) {
+      renderAdminReservations();
+    } else {
+      clearInterval(window.adminReservationsRefreshInterval);
+      window.adminReservationsRefreshInterval = null;
+    }
+  }, 3000);
 }
 
 function closeAdminReservationsModal() {
   if (els.adminReservationsModal) {
     els.adminReservationsModal.classList.add("hidden");
+  }
+  // Clear refresh interval when modal closes
+  if (window.adminReservationsRefreshInterval) {
+    clearInterval(window.adminReservationsRefreshInterval);
+    window.adminReservationsRefreshInterval = null;
   }
 }
 
