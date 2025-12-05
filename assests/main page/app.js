@@ -148,6 +148,8 @@ const state = {
   menu: [],
   cart: new Map(),
   editingId: null,
+  lastRenderedReviews: null, // Cache to prevent unnecessary re-renders
+  isRenderingReviews: false, // Flag to prevent concurrent renders
 };
 
 const els = {
@@ -397,13 +399,11 @@ try {
   // Also check immediately
   checkAdminStatus();
   
-  // Set up periodic sync for all features (every 5 seconds) to catch changes from other devices
+  // Set up periodic sync for all features (every 10 seconds) to catch changes from other devices
+  // Increased interval to reduce flickering
   setInterval(() => {
-    // Sync reviews
-    loadReviews().then(() => {
-      renderReviews();
-      renderMenu();
-    }).catch(err => {
+    // Sync reviews (loadReviews will handle rendering if data changed)
+    loadReviews().catch(err => {
       console.warn("Periodic review sync failed:", err);
     });
     
@@ -418,64 +418,79 @@ try {
     
     // Sync menu
     loadMenu().then((menuData) => {
-      state.menu = menuData;
-      renderMenu();
+      if (JSON.stringify(state.menu.map(m => m.id)) !== JSON.stringify(menuData.map(m => m.id))) {
+        state.menu = menuData;
+        renderMenu();
+      }
     }).catch(err => {
       console.warn("Periodic menu sync failed:", err);
     });
-  }, 5000);
+  }, 10000); // Increased to 10 seconds to reduce flickering
   
   // Sync when page becomes visible (user switches back to tab)
+  // Debounced to prevent multiple rapid syncs
+  let visibilitySyncTimeout = null;
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      // Page became visible - sync all data
-      loadReviews().then(() => {
-        renderReviews();
-        renderMenu();
-      }).catch(err => {
-        console.warn("Visibility change review sync failed:", err);
+      // Debounce visibility sync
+      if (visibilitySyncTimeout) {
+        clearTimeout(visibilitySyncTimeout);
+      }
+      visibilitySyncTimeout = setTimeout(() => {
+        // Page became visible - sync all data
+        loadReviews().catch(err => {
+          console.warn("Visibility change review sync failed:", err);
+        });
+        
+        if (isAdmin()) {
+          loadReservations().then(() => {
+            renderAdminReservations();
+          }).catch(err => {
+            console.warn("Visibility change reservation sync failed:", err);
+          });
+        }
+        
+        loadMenu().then((menuData) => {
+          if (JSON.stringify(state.menu.map(m => m.id)) !== JSON.stringify(menuData.map(m => m.id))) {
+            state.menu = menuData;
+            renderMenu();
+          }
+        }).catch(err => {
+          console.warn("Visibility change menu sync failed:", err);
+        });
+      }, 500); // 500ms debounce
+    }
+  });
+  
+  // Sync when window gains focus
+  // Debounced to prevent multiple rapid syncs
+  let focusSyncTimeout = null;
+  window.addEventListener("focus", () => {
+    if (focusSyncTimeout) {
+      clearTimeout(focusSyncTimeout);
+    }
+    focusSyncTimeout = setTimeout(() => {
+      loadReviews().catch(err => {
+        console.warn("Focus review sync failed:", err);
       });
       
       if (isAdmin()) {
         loadReservations().then(() => {
           renderAdminReservations();
         }).catch(err => {
-          console.warn("Visibility change reservation sync failed:", err);
+          console.warn("Focus reservation sync failed:", err);
         });
       }
       
       loadMenu().then((menuData) => {
-        state.menu = menuData;
-        renderMenu();
+        if (JSON.stringify(state.menu.map(m => m.id)) !== JSON.stringify(menuData.map(m => m.id))) {
+          state.menu = menuData;
+          renderMenu();
+        }
       }).catch(err => {
-        console.warn("Visibility change menu sync failed:", err);
+        console.warn("Focus menu sync failed:", err);
       });
-    }
-  });
-  
-  // Sync when window gains focus
-  window.addEventListener("focus", () => {
-    loadReviews().then(() => {
-      renderReviews();
-      renderMenu();
-    }).catch(err => {
-      console.warn("Focus review sync failed:", err);
-    });
-    
-    if (isAdmin()) {
-      loadReservations().then(() => {
-        renderAdminReservations();
-      }).catch(err => {
-        console.warn("Focus reservation sync failed:", err);
-      });
-    }
-    
-    loadMenu().then((menuData) => {
-      state.menu = menuData;
-      renderMenu();
-    }).catch(err => {
-      console.warn("Focus menu sync failed:", err);
-    });
+    }, 500); // 500ms debounce
   });
 })();
 
@@ -669,7 +684,8 @@ if (els.reviewForm) {
       console.warn("Background sync failed, but review is saved locally:", err);
     });
     
-    // Update UI immediately
+    // Clear cache and update UI immediately
+    state.lastRenderedReviews = null;
     renderReviews();
     renderMenu(); // Update menu to show new ratings
     closeReviewModal();
@@ -1416,19 +1432,20 @@ async function loadReviews() {
       // Sort by timestamp
       merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       
-      // Always update localStorage with backend data (handles deletions)
-      localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(merged));
+      // Check if data actually changed before updating
+      const currentData = JSON.stringify(local.map(r => r.id).sort());
+      const newData = JSON.stringify(merged.map(r => r.id).sort());
+      const dataChanged = currentData !== newData;
       
-      // Re-render if data changed
-      const localIds = new Set(local.map(r => r.id));
-      const mergedIds = new Set(merged.map(r => r.id));
-      const changed = local.length !== merged.length || 
-                     ![...localIds].every(id => mergedIds.has(id)) ||
-                     ![...mergedIds].every(id => localIds.has(id));
-      
-      if (changed) {
-        renderReviews();
-        renderMenu();
+      if (dataChanged) {
+        // Only update localStorage if data actually changed
+        localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(merged));
+        
+        // Only re-render if not already rendering (prevents flickering)
+        if (!state.isRenderingReviews) {
+          renderReviews();
+          renderMenu();
+        }
       }
     }
   }).catch(err => {
@@ -1458,7 +1475,7 @@ async function saveReviews(reviews) {
     return;
   }
   
-  // Sync to backend - ensure it completes for proper multi-device sync
+    // Sync to backend - ensure it completes for proper multi-device sync
   const last = reviews[reviews.length - 1];
   if (last) {
     apiPost("/reviews", last, () => {
@@ -1467,11 +1484,10 @@ async function saveReviews(reviews) {
     }).then(() => {
       console.log("Review synced to backend successfully");
       // After successful sync, refresh from backend to get any updates
+      // Clear cache to force re-render
+      state.lastRenderedReviews = null;
       setTimeout(() => {
-        loadReviews().then(() => {
-          renderReviews();
-          renderMenu();
-        });
+        loadReviews();
       }, 300);
     }).catch(err => {
       console.warn("Background backend sync failed (review is still saved locally):", err);
@@ -1480,65 +1496,92 @@ async function saveReviews(reviews) {
 }
 
 async function renderReviews() {
-  // Load reviews synchronously from localStorage (reliable source)
-  const saved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
-  let reviews = [];
-  if (saved) {
-    try {
-      reviews = JSON.parse(saved) || [];
-      if (!Array.isArray(reviews)) {
-        reviews = [];
-      }
-    } catch (e) {
-      console.error("Failed to parse reviews for rendering:", e);
-      reviews = [];
-    }
-  }
-  
-  // Trigger background sync (non-blocking)
-  loadReviews().catch(err => {
-    console.warn("Background review load failed (using cached data):", err);
-  });
-  
-  if (!reviews.length) {
-    els.reviewsEmptyState.classList.remove("hidden");
-    els.reviewsList.innerHTML = "";
-    renderManageReviewsList();
+  // Prevent concurrent renders to avoid flickering
+  if (state.isRenderingReviews) {
     return;
   }
+  
+  state.isRenderingReviews = true;
+  
+  try {
+    // Load reviews synchronously from localStorage (reliable source)
+    const saved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
+    let reviews = [];
+    if (saved) {
+      try {
+        reviews = JSON.parse(saved) || [];
+        if (!Array.isArray(reviews)) {
+          reviews = [];
+        }
+      } catch (e) {
+        console.error("Failed to parse reviews for rendering:", e);
+        reviews = [];
+      }
+    }
+    
+    // Sort reviews by timestamp
+    reviews.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    
+    // Check if data actually changed to prevent unnecessary re-renders
+    const reviewsKey = JSON.stringify(reviews.map(r => ({ id: r.id, timestamp: r.timestamp })));
+    if (state.lastRenderedReviews === reviewsKey) {
+      // Data hasn't changed, skip render
+      state.isRenderingReviews = false;
+      return;
+    }
+    
+    // Update cache
+    state.lastRenderedReviews = reviewsKey;
+    
+    if (!reviews.length) {
+      els.reviewsEmptyState.classList.remove("hidden");
+      els.reviewsList.innerHTML = "";
+      renderManageReviewsList();
+      state.isRenderingReviews = false;
+      return;
+    }
 
-  els.reviewsEmptyState.classList.add("hidden");
-  els.reviewsList.innerHTML = reviews
-    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
-    .map((review) => {
-      const stars = getRatingStars(review.rating);
-      const date = review.timestamp 
-        ? new Date(review.timestamp).toLocaleDateString("en-IN", {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-          })
-        : "Recently";
-      return `
-        <article class="review-card">
-          <div class="review-header">
-            <div class="reviewer-info">
-              <div class="reviewer-name">${escapeHtml(review.reviewerName || "Anonymous")}</div>
-              <div class="review-item-name">${escapeHtml(review.itemName || "Unknown Item")}</div>
-              <div class="review-rating-display">
-                <div class="stars">${stars}</div>
-                <span>${review.rating || 0}/5</span>
+    els.reviewsEmptyState.classList.add("hidden");
+    
+    // Build HTML
+    const reviewsHtml = reviews
+      .map((review) => {
+        const stars = getRatingStars(review.rating);
+        const date = review.timestamp 
+          ? new Date(review.timestamp).toLocaleDateString("en-IN", {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            })
+          : "Recently";
+        return `
+          <article class="review-card">
+            <div class="review-header">
+              <div class="reviewer-info">
+                <div class="reviewer-name">${escapeHtml(review.reviewerName || "Anonymous")}</div>
+                <div class="review-item-name">${escapeHtml(review.itemName || "Unknown Item")}</div>
+                <div class="review-rating-display">
+                  <div class="stars">${stars}</div>
+                  <span>${review.rating || 0}/5</span>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="review-text">${escapeHtml(review.text || "")}</div>
-          <div class="review-date">${date}</div>
-        </article>
-      `;
-    })
-    .join("");
+            <div class="review-text">${escapeHtml(review.text || "")}</div>
+            <div class="review-date">${date}</div>
+          </article>
+        `;
+      })
+      .join("");
 
-  renderManageReviewsList();
+    // Update DOM in one operation to prevent flickering
+    els.reviewsList.innerHTML = reviewsHtml;
+
+    renderManageReviewsList();
+  } catch (err) {
+    console.error("Error rendering reviews:", err);
+  } finally {
+    state.isRenderingReviews = false;
+  }
 }
 
 function openReviewModal() {
@@ -1710,24 +1753,24 @@ async function deleteReview(id) {
     return;
   }
   
-  // Sync deletion to backend - wait for it to complete to ensure sync
+    // Sync deletion to backend - wait for it to complete to ensure sync
   apiDelete(`/reviews?id=${encodeURIComponent(id)}`, () => {
     console.warn("Backend deletion sync failed, but review is deleted locally");
     return null;
   }).then(() => {
     console.log("Review deletion synced to backend successfully");
     // After successful deletion, trigger a sync to update from backend
+    // Clear cache to force re-render
+    state.lastRenderedReviews = null;
     setTimeout(() => {
-      loadReviews().then(() => {
-        renderReviews();
-        renderMenu();
-      });
-    }, 500);
+      loadReviews();
+    }, 300);
   }).catch(err => {
     console.warn("Background backend deletion sync failed (review is still deleted locally):", err);
   });
   
-  // Update UI immediately
+  // Clear cache and update UI immediately
+  state.lastRenderedReviews = null;
   renderReviews();
   renderManageReviewsList();
 }
