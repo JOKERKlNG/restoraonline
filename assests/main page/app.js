@@ -1214,8 +1214,43 @@ function closeReservationModal() {
   }
 }
 
+async function updateReservationStatus(id, status) {
+  if (!id || !status) return;
+  
+  // Update in localStorage
+  const raw = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
+  let reservations = [];
+  if (raw) {
+    try {
+      reservations = JSON.parse(raw) || [];
+      if (!Array.isArray(reservations)) {
+        reservations = [];
+      }
+    } catch {
+      reservations = [];
+    }
+  }
+  
+  const index = reservations.findIndex(r => r.id === id);
+  if (index !== -1) {
+    reservations[index] = { ...reservations[index], status };
+    localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(reservations));
+  }
+  
+  // Sync to backend
+  apiPatch(`/reservations?id=${encodeURIComponent(id)}`, { status }, () => {
+    console.warn("Backend status update failed, but updated locally");
+    return null;
+  }).catch(err => {
+    console.warn("Backend status update error:", err);
+  });
+  
+  // Refresh the view
+  await renderAdminReservations();
+}
+
 async function deleteReservation(id) {
-  if (!id || !confirm("Are you sure you want to delete this reservation?")) return;
+  if (!id || !confirm("Are you sure you want to delete this reservation? This action cannot be undone.")) return;
   
   // Remove from localStorage
   const raw = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
@@ -1306,6 +1341,31 @@ async function renderAdminReservations() {
                          status === "rejected" ? "Cancelled" : 
                          "Pending";
 
+      // Action buttons based on status
+      let actionButtons = '';
+      if (status === "pending") {
+        actionButtons = `
+          <button class="btn primary small-btn accept-reservation-btn" data-id="${res.id}" title="Accept reservation">
+            ✓ Accept
+          </button>
+          <button class="btn reject-btn small-btn reject-reservation-btn" data-id="${res.id}" title="Reject reservation">
+            ✕ Reject
+          </button>
+        `;
+      } else if (status === "approved") {
+        actionButtons = `
+          <button class="btn reject-btn small-btn reject-reservation-btn" data-id="${res.id}" title="Reject reservation">
+            ✕ Reject
+          </button>
+        `;
+      } else if (status === "rejected") {
+        actionButtons = `
+          <button class="btn primary small-btn accept-reservation-btn" data-id="${res.id}" title="Accept reservation">
+            ✓ Accept
+          </button>
+        `;
+      }
+
       return `
         <article class="admin-res-card">
           <header class="admin-res-header">
@@ -1322,21 +1382,44 @@ async function renderAdminReservations() {
           </div>
           <footer class="admin-res-footer">
             <span class="admin-res-created">Reserved: ${created}</span>
-            <button class="btn ghost small-btn delete-reservation-btn" data-id="${res.id}" title="Delete reservation">
-              Delete
-            </button>
+            <div class="admin-res-actions">
+              ${actionButtons}
+              <button class="btn delete-btn small-btn delete-reservation-btn" data-id="${res.id}" title="Delete reservation">
+                🗑️ Delete
+              </button>
+            </div>
           </footer>
         </article>
       `;
     })
     .join("");
   
-  // Add event listeners for delete buttons
+  // Add event listeners for action buttons
   els.adminReservationsList.querySelectorAll(".delete-reservation-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const id = btn.dataset.id;
       if (id) {
         deleteReservation(id);
+      }
+    });
+  });
+  
+  els.adminReservationsList.querySelectorAll(".accept-reservation-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      if (id) {
+        updateReservationStatus(id, "approved");
+      }
+    });
+  });
+  
+  els.adminReservationsList.querySelectorAll(".reject-reservation-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      if (id) {
+        if (confirm("Are you sure you want to reject this reservation?")) {
+          updateReservationStatus(id, "rejected");
+        }
       }
     });
   });
