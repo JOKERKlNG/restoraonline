@@ -150,6 +150,10 @@ const state = {
   editingId: null,
   lastRenderedReviews: null, // Cache to prevent unnecessary re-renders
   isRenderingReviews: false, // Flag to prevent concurrent renders
+  lastRenderedReservations: null, // Cache for reservations
+  isRenderingReservations: false, // Flag to prevent concurrent reservation renders
+  lastRenderedMenu: null, // Cache for menu
+  isRenderingMenu: false, // Flag to prevent concurrent menu renders
 };
 
 const els = {
@@ -324,11 +328,20 @@ async function loadReservations() {
   // 2) Background refresh from backend - use backend as source of truth for deletions
   apiGet("/reservations", () => null).then((serverData) => {
     if (Array.isArray(serverData)) {
-      // Backend is source of truth - sync deletions
-      localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(serverData));
-      // If admin view is visible, re-render with fresh data
-      if (isAdmin()) {
-        renderAdminReservations();
+      // Check if data actually changed before updating
+      const currentData = JSON.stringify(local.map(r => ({ id: r.id, status: r.status, createdAt: r.createdAt })).sort((a, b) => (a.id || '').localeCompare(b.id || '')));
+      const newData = JSON.stringify(serverData.map(r => ({ id: r.id, status: r.status, createdAt: r.createdAt })).sort((a, b) => (a.id || '').localeCompare(b.id || '')));
+      const dataChanged = currentData !== newData;
+      
+      if (dataChanged) {
+        // Backend is source of truth - sync deletions
+        localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(serverData));
+        // Clear cache to force re-render
+        state.lastRenderedReservations = null;
+        // If admin view is visible, re-render with fresh data
+        if (isAdmin() && !state.isRenderingReservations) {
+          renderAdminReservations();
+        }
       }
     }
   }).catch(err => {
@@ -407,19 +420,20 @@ try {
       console.warn("Periodic review sync failed:", err);
     });
     
-    // Sync reservations (if admin)
+    // Sync reservations (if admin) - loadReservations will handle rendering if data changed
     if (isAdmin()) {
-      loadReservations().then(() => {
-        renderAdminReservations();
-      }).catch(err => {
+      loadReservations().catch(err => {
         console.warn("Periodic reservation sync failed:", err);
       });
     }
     
     // Sync menu
     loadMenu().then((menuData) => {
-      if (JSON.stringify(state.menu.map(m => m.id)) !== JSON.stringify(menuData.map(m => m.id))) {
+      const currentIds = JSON.stringify(state.menu.map(m => m.id).sort());
+      const newIds = JSON.stringify(menuData.map(m => m.id).sort());
+      if (currentIds !== newIds) {
         state.menu = menuData;
+        state.lastRenderedMenu = null; // Clear cache
         renderMenu();
       }
     }).catch(err => {
@@ -443,16 +457,17 @@ try {
         });
         
         if (isAdmin()) {
-          loadReservations().then(() => {
-            renderAdminReservations();
-          }).catch(err => {
+          loadReservations().catch(err => {
             console.warn("Visibility change reservation sync failed:", err);
           });
         }
         
         loadMenu().then((menuData) => {
-          if (JSON.stringify(state.menu.map(m => m.id)) !== JSON.stringify(menuData.map(m => m.id))) {
+          const currentIds = JSON.stringify(state.menu.map(m => m.id).sort());
+          const newIds = JSON.stringify(menuData.map(m => m.id).sort());
+          if (currentIds !== newIds) {
             state.menu = menuData;
+            state.lastRenderedMenu = null; // Clear cache
             renderMenu();
           }
         }).catch(err => {
@@ -475,16 +490,17 @@ try {
       });
       
       if (isAdmin()) {
-        loadReservations().then(() => {
-          renderAdminReservations();
-        }).catch(err => {
+        loadReservations().catch(err => {
           console.warn("Focus reservation sync failed:", err);
         });
       }
       
       loadMenu().then((menuData) => {
-        if (JSON.stringify(state.menu.map(m => m.id)) !== JSON.stringify(menuData.map(m => m.id))) {
+        const currentIds = JSON.stringify(state.menu.map(m => m.id).sort());
+        const newIds = JSON.stringify(menuData.map(m => m.id).sort());
+        if (currentIds !== newIds) {
           state.menu = menuData;
+          state.lastRenderedMenu = null; // Clear cache
           renderMenu();
         }
       }).catch(err => {
@@ -718,6 +734,7 @@ els.form.addEventListener("submit", (evt) => {
   }
 
   persistMenu();
+  state.lastRenderedMenu = null; // Clear cache
   renderMenu();
   closeModal();
 });
@@ -727,6 +744,7 @@ els.deleteItemBtn.addEventListener("click", () => {
   if (!id) return;
   state.menu = state.menu.filter((item) => item.id !== id);
   persistMenu();
+  state.lastRenderedMenu = null; // Clear cache
   renderMenu();
   closeModal();
 });
@@ -864,36 +882,56 @@ async function renderMenu() {
     return;
   }
   
-  if (!state.menu || state.menu.length === 0) {
-    console.warn("Menu is empty!");
-    els.menuList.innerHTML = "<p>No menu items available.</p>";
+  // Prevent concurrent renders to avoid flickering
+  if (state.isRenderingMenu) {
     return;
   }
   
-  els.menuList.innerHTML = "";
-  const reviews = await loadReviews();
-  const adminLoggedIn = isAdmin();
-  const currentUser = getCurrentUser();
-  const favoriteIds = Array.isArray(currentUser?.favorites)
-    ? new Set(currentUser.favorites)
-    : new Set();
+  state.isRenderingMenu = true;
   
-  // Load reviews from localStorage for menu ratings (reliable source)
-  const reviewsSaved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
-  let reviewsForMenu = [];
-  if (reviewsSaved) {
-    try {
-      reviewsForMenu = JSON.parse(reviewsSaved) || [];
-      if (!Array.isArray(reviewsForMenu)) {
+  try {
+    if (!state.menu || state.menu.length === 0) {
+      console.warn("Menu is empty!");
+      els.menuList.innerHTML = "<p>No menu items available.</p>";
+      state.isRenderingMenu = false;
+      return;
+    }
+    
+    // Check if menu data actually changed
+    const menuKey = JSON.stringify(state.menu.map(m => ({ id: m.id, name: m.name, price: m.price })));
+    if (state.lastRenderedMenu === menuKey) {
+      // Menu data hasn't changed, skip render
+      state.isRenderingMenu = false;
+      return;
+    }
+    
+    // Update cache
+    state.lastRenderedMenu = menuKey;
+    
+    const adminLoggedIn = isAdmin();
+    const currentUser = getCurrentUser();
+    const favoriteIds = Array.isArray(currentUser?.favorites)
+      ? new Set(currentUser.favorites)
+      : new Set();
+    
+    // Load reviews from localStorage for menu ratings (reliable source)
+    const reviewsSaved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
+    let reviewsForMenu = [];
+    if (reviewsSaved) {
+      try {
+        reviewsForMenu = JSON.parse(reviewsSaved) || [];
+        if (!Array.isArray(reviewsForMenu)) {
+          reviewsForMenu = [];
+        }
+      } catch (e) {
+        console.warn("Failed to parse reviews for menu:", e);
         reviewsForMenu = [];
       }
-    } catch (e) {
-      console.warn("Failed to parse reviews for menu:", e);
-      reviewsForMenu = [];
     }
-  }
-  
-  state.menu.forEach((item) => {
+    
+    // Build menu HTML
+    const menuCards = [];
+    state.menu.forEach((item) => {
     const card = document.createElement("article");
     card.className = "menu-card";
     
@@ -966,7 +1004,8 @@ function toggleFavorite(itemId) {
     console.warn("Unable to sync favourites to stored users", e);
   }
 
-  // Re-render menu so favourite state updates
+  // Clear cache and re-render menu so favourite state updates
+  state.lastRenderedMenu = null;
   renderMenu();
 }
 
@@ -1116,100 +1155,145 @@ function populatePrintArea(entries, total) {
 
 async function renderAdminReservations() {
   if (!els.adminReservationsPanel || !els.adminReservationsList) return;
-
-  const reservations = await loadReservations();
-  if (!reservations.length) {
-    els.adminReservationsList.innerHTML =
-      '<p class="empty-state">No reservations received yet.</p>';
+  
+  // Prevent concurrent renders to avoid flickering
+  if (state.isRenderingReservations) {
     return;
   }
+  
+  state.isRenderingReservations = true;
+  
+  try {
+    // Load from localStorage directly (reliable source)
+    const saved = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
+    let reservations = [];
+    if (saved) {
+      try {
+        reservations = JSON.parse(saved) || [];
+        if (!Array.isArray(reservations)) {
+          reservations = [];
+        }
+      } catch (e) {
+        console.error("Failed to parse reservations for rendering:", e);
+        reservations = [];
+      }
+    }
+    
+    // Sort reservations
+    const sorted = [...reservations].sort(
+      (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+    );
+    
+    // Check if data actually changed to prevent unnecessary re-renders
+    const reservationsKey = JSON.stringify(sorted.map(r => ({ id: r.id, status: r.status, createdAt: r.createdAt })));
+    if (state.lastRenderedReservations === reservationsKey) {
+      // Data hasn't changed, skip render
+      state.isRenderingReservations = false;
+      return;
+    }
+    
+    // Update cache
+    state.lastRenderedReservations = reservationsKey;
+    
+    if (!sorted.length) {
+      els.adminReservationsList.innerHTML =
+        '<p class="empty-state">No reservations received yet.</p>';
+      state.isRenderingReservations = false;
+      return;
+    }
 
-  const sorted = [...reservations].sort(
-    (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
-  );
+    // Build HTML in one operation
+    const reservationsHtml = sorted
+      .map((res) => {
+        const status = res.status || "pending";
+        const created = res.createdAt
+          ? new Date(res.createdAt).toLocaleString()
+          : "–";
+        const dateTime = res.date && res.time ? `${res.date} · ${res.time}` : "–";
 
-  els.adminReservationsList.innerHTML = sorted
-    .map((res) => {
-      const status = res.status || "pending";
-      const created = res.createdAt
-        ? new Date(res.createdAt).toLocaleString()
-        : "–";
-      const dateTime = res.date && res.time ? `${res.date} · ${res.time}` : "–";
+        const statusLabel =
+          status === "approved"
+            ? "Approved"
+            : status === "rejected"
+            ? "Rejected"
+            : "Pending";
 
-      const statusLabel =
-        status === "approved"
-          ? "Approved"
-          : status === "rejected"
-          ? "Rejected"
-          : "Pending";
+        const actionsHtml =
+          status === "rejected"
+            ? `<button class="btn ghost small-btn" data-action="mark-pending" data-id="${res.id}">Reopen</button>`
+            : `
+                <button class="btn ghost small-btn" data-action="reject" data-id="${res.id}">Reject</button>
+                ${
+                  status === "pending"
+                    ? `<button class="btn primary small-btn" data-action="approve" data-id="${res.id}">Approve</button>`
+                    : ""
+                }
+              `;
 
-      const actionsHtml =
-        status === "rejected"
-          ? `<button class="btn ghost small-btn" data-action="mark-pending" data-id="${res.id}">Reopen</button>`
-          : `
-              <button class="btn ghost small-btn" data-action="reject" data-id="${res.id}">Reject</button>
+        return `
+          <article class="admin-res-card">
+            <header class="admin-res-header">
+              <div>
+                <h3>${escapeHtml(res.name || "Guest")}</h3>
+                <p>${escapeHtml(res.phone || "No phone")} · ${escapeHtml(dateTime)}</p>
+              </div>
+              <span class="res-status res-status--${status}">${statusLabel}</span>
+            </header>
+            <div class="admin-res-body">
+              <p><strong>Guests:</strong> ${res.guests || 0}</p>
               ${
-                status === "pending"
-                  ? `<button class="btn primary small-btn" data-action="approve" data-id="${res.id}">Approve</button>`
+                res.occasion
+                  ? `<p><strong>Occasion:</strong> ${escapeHtml(res.occasion)}</p>`
                   : ""
               }
-            `;
-
-      return `
-        <article class="admin-res-card">
-          <header class="admin-res-header">
-            <div>
-              <h3>${res.name || "Guest"}</h3>
-              <p>${res.phone || "No phone"} · ${dateTime}</p>
+              ${
+                res.notes
+                  ? `<p><strong>Notes:</strong> ${escapeHtml(res.notes)}</p>`
+                  : ""
+              }
+              ${
+                res.userEmail
+                  ? `<p><strong>User Email:</strong> ${escapeHtml(res.userEmail)}</p>`
+                  : ""
+              }
             </div>
-            <span class="res-status res-status--${status}">${statusLabel}</span>
-          </header>
-          <div class="admin-res-body">
-            <p><strong>Guests:</strong> ${res.guests || 0}</p>
-            ${
-              res.occasion
-                ? `<p><strong>Occasion:</strong> ${res.occasion}</p>`
-                : ""
-            }
-            ${
-              res.notes
-                ? `<p><strong>Notes:</strong> ${res.notes}</p>`
-                : ""
-            }
-            ${
-              res.userEmail
-                ? `<p><strong>User Email:</strong> ${res.userEmail}</p>`
-                : ""
-            }
-          </div>
-          <footer class="admin-res-footer">
-            <span class="admin-res-created">Requested: ${created}</span>
-            <div class="admin-res-actions">
-              ${actionsHtml}
-            </div>
-          </footer>
-        </article>
-      `;
-    })
-    .join("");
+            <footer class="admin-res-footer">
+              <span class="admin-res-created">Requested: ${escapeHtml(created)}</span>
+              <div class="admin-res-actions">
+                ${actionsHtml}
+              </div>
+            </footer>
+          </article>
+        `;
+      })
+      .join("");
 
-  els.adminReservationsList
-    .querySelectorAll("[data-action]")
-    .forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.dataset.id;
-        const action = btn.dataset.action;
-        if (!id || !action) return;
+    // Update DOM in one operation to prevent flickering
+    els.adminReservationsList.innerHTML = reservationsHtml;
 
-        if (action === "approve") {
-          openApproveReservationModal(id);
-        } else if (action === "reject") {
-          openRejectReservationModal(id);
-        } else if (action === "mark-pending") {
-          updateReservationStatus(id, "pending");
-        }
+    // Re-attach event listeners
+    els.adminReservationsList
+      .querySelectorAll("[data-action]")
+      .forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.id;
+          const action = btn.dataset.action;
+          if (!id || !action) return;
+
+          if (action === "approve") {
+            openApproveReservationModal(id);
+          } else if (action === "reject") {
+            openRejectReservationModal(id);
+          } else if (action === "mark-pending") {
+            updateReservationStatus(id, "pending");
+          }
+        });
       });
-    });
+  } catch (err) {
+    console.error("Error rendering reservations:", err);
+  } finally {
+    state.isRenderingReservations = false;
+  }
 }
 
 async function clearAllReservations() {
@@ -1232,7 +1316,20 @@ async function updateReservationStatus(id, status) {
   });
   
   // Then update local storage
-  const reservations = await loadReservations();
+  const saved = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
+  let reservations = [];
+  if (saved) {
+    try {
+      reservations = JSON.parse(saved) || [];
+      if (!Array.isArray(reservations)) {
+        reservations = [];
+      }
+    } catch (e) {
+      console.error("Failed to parse reservations for update:", e);
+      reservations = [];
+    }
+  }
+  
   const idx = reservations.findIndex((r) => r.id === id);
   if (idx === -1) return;
 
@@ -1242,13 +1339,15 @@ async function updateReservationStatus(id, status) {
   };
   localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(reservations));
   
+  // Clear cache to force re-render
+  state.lastRenderedReservations = null;
+  
   // Refresh from backend to ensure sync
   setTimeout(() => {
-    loadReservations().then(() => {
-      renderAdminReservations();
-    });
+    loadReservations();
   }, 300);
   
+  // Update UI immediately
   renderAdminReservations();
 }
 
@@ -1370,6 +1469,8 @@ function checkAdminStatus() {
     }
     if (els.adminReservationsPanel) {
       els.adminReservationsPanel.style.display = "block";
+      // Clear cache to force fresh render
+      state.lastRenderedReservations = null;
       renderAdminReservations();
     }
   } else {
@@ -1382,7 +1483,8 @@ function checkAdminStatus() {
     }
   }
   
-  // Re-render menu to show/hide Edit buttons based on admin status
+  // Clear menu cache and re-render to show/hide Edit buttons based on admin status
+  state.lastRenderedMenu = null;
   renderMenu();
 }
 
