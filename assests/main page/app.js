@@ -529,9 +529,40 @@ if (els.reviewForm) {
       return;
     }
 
-    const reviews = await loadReviews();
+    // Load reviews from localStorage (reliable source)
+    const saved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
+    let reviews = [];
+    if (saved) {
+      try {
+        reviews = JSON.parse(saved) || [];
+        if (!Array.isArray(reviews)) {
+          reviews = [];
+        }
+      } catch (e) {
+        console.error("Failed to parse reviews:", e);
+        reviews = [];
+      }
+    }
+    
+    // Add new review
     reviews.push(reviewData);
-    await saveReviews(reviews);
+    
+    // Save immediately to localStorage (reliable storage)
+    try {
+      localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
+      console.log("Review saved successfully to localStorage");
+    } catch (e) {
+      console.error("Failed to save review:", e);
+      alert("Error: Could not save review. Please try again.");
+      return;
+    }
+    
+    // Sync to backend in background (non-blocking)
+    saveReviews(reviews).catch(err => {
+      console.warn("Background sync failed, but review is saved locally:", err);
+    });
+    
+    // Update UI immediately
     renderReviews();
     renderMenu(); // Update menu to show new ratings
     closeReviewModal();
@@ -720,14 +751,29 @@ async function renderMenu() {
     ? new Set(currentUser.favorites)
     : new Set();
   
+  // Load reviews from localStorage for menu ratings (reliable source)
+  const reviewsSaved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
+  let reviewsForMenu = [];
+  if (reviewsSaved) {
+    try {
+      reviewsForMenu = JSON.parse(reviewsSaved) || [];
+      if (!Array.isArray(reviewsForMenu)) {
+        reviewsForMenu = [];
+      }
+    } catch (e) {
+      console.warn("Failed to parse reviews for menu:", e);
+      reviewsForMenu = [];
+    }
+  }
+  
   state.menu.forEach((item) => {
     const card = document.createElement("article");
     card.className = "menu-card";
     
     // Calculate average rating for this item
-    const itemReviews = reviews.filter((r) => r.itemId === item.id);
+    const itemReviews = reviewsForMenu.filter((r) => r.itemId === item.id);
     const avgRating = itemReviews.length > 0
-      ? itemReviews.reduce((sum, r) => sum + r.rating, 0) / itemReviews.length
+      ? itemReviews.reduce((sum, r) => sum + (r.rating || 0), 0) / itemReviews.length
       : 0;
     const ratingStars = avgRating > 0 ? getRatingStars(avgRating) : '';
     const isFavorite = favoriteIds.has(item.id);
@@ -1199,41 +1245,111 @@ function checkAdminStatus() {
   renderMenu();
 }
 
-// Reviews functionality
+// Reviews functionality - RELIABLE VERSION: localStorage is source of truth
 async function loadReviews() {
-  // 1) Instant local reviews
+  // ALWAYS use localStorage as primary source - most reliable
   const saved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
   let local = [];
   if (saved) {
     try {
       local = JSON.parse(saved) || [];
-    } catch {
+      // Ensure it's an array
+      if (!Array.isArray(local)) {
+        local = [];
+      }
+    } catch (e) {
+      console.warn("Failed to parse reviews from localStorage:", e);
       local = [];
     }
   }
 
-  // 2) Background refresh from backend
+  // Background sync: merge backend data with local (don't replace, merge)
+  // This happens in background and doesn't block the UI
   apiGet("/reviews", () => null).then((backendReviews) => {
-    if (Array.isArray(backendReviews)) {
-      localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(backendReviews));
-      renderReviews();
-      renderMenu();
+    if (Array.isArray(backendReviews) && backendReviews.length > 0) {
+      // Merge strategy: combine local and backend, keep all unique reviews
+      const localMap = new Map(local.map(r => [r.id, r]));
+      
+      // Add backend reviews that don't exist locally
+      backendReviews.forEach(backendReview => {
+        if (!localMap.has(backendReview.id)) {
+          localMap.set(backendReview.id, backendReview);
+        }
+      });
+      
+      // Convert back to array and sort by timestamp
+      const merged = Array.from(localMap.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      
+      // Only update if we got new reviews from backend
+      if (merged.length > local.length) {
+        localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(merged));
+        // Re-render with merged data
+        renderReviews();
+        renderMenu();
+      }
     }
+  }).catch(err => {
+    // Silently fail - we don't care if backend is slow, localStorage is our source
+    console.warn("Background review sync failed (this is OK):", err);
   });
 
   return local;
 }
 
 async function saveReviews(reviews) {
+  // CRITICAL: Save to localStorage FIRST - this is our source of truth
+  // Ensure reviews is a valid array
+  if (!Array.isArray(reviews)) {
+    console.error("saveReviews: reviews is not an array", reviews);
+    return;
+  }
+  
+  // Save immediately to localStorage - this is the reliable storage
+  try {
+    localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
+    console.log("Reviews saved to localStorage:", reviews.length, "reviews");
+  } catch (e) {
+    console.error("Failed to save reviews to localStorage:", e);
+    // This is critical - if localStorage fails, we have a problem
+    alert("Warning: Could not save review. Please try again.");
+    return;
+  }
+  
+  // Then try to sync to backend in background (non-blocking)
+  // If this fails, it's OK - localStorage has the data
   const last = reviews[reviews.length - 1];
   if (last) {
-    await apiPost("/reviews", last, () => null);
+    // Don't await - let it happen in background
+    apiPost("/reviews", last, () => {
+      console.warn("Backend sync failed, but review is saved locally");
+      return null;
+    }).catch(err => {
+      // Silently fail - localStorage already has the data
+      console.warn("Background backend sync failed (review is still saved locally):", err);
+    });
   }
-  localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
 }
 
 async function renderReviews() {
-  const reviews = await loadReviews();
+  // Load reviews synchronously from localStorage (reliable source)
+  const saved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
+  let reviews = [];
+  if (saved) {
+    try {
+      reviews = JSON.parse(saved) || [];
+      if (!Array.isArray(reviews)) {
+        reviews = [];
+      }
+    } catch (e) {
+      console.error("Failed to parse reviews for rendering:", e);
+      reviews = [];
+    }
+  }
+  
+  // Trigger background sync (non-blocking)
+  loadReviews().catch(err => {
+    console.warn("Background review load failed (using cached data):", err);
+  });
   
   if (!reviews.length) {
     els.reviewsEmptyState.classList.remove("hidden");
@@ -1244,27 +1360,29 @@ async function renderReviews() {
 
   els.reviewsEmptyState.classList.add("hidden");
   els.reviewsList.innerHTML = reviews
-    .sort((a, b) => b.timestamp - a.timestamp)
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
     .map((review) => {
       const stars = getRatingStars(review.rating);
-      const date = new Date(review.timestamp).toLocaleDateString("en-IN", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
+      const date = review.timestamp 
+        ? new Date(review.timestamp).toLocaleDateString("en-IN", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          })
+        : "Recently";
       return `
         <article class="review-card">
           <div class="review-header">
             <div class="reviewer-info">
-              <div class="reviewer-name">${escapeHtml(review.reviewerName)}</div>
-              <div class="review-item-name">${escapeHtml(review.itemName)}</div>
+              <div class="reviewer-name">${escapeHtml(review.reviewerName || "Anonymous")}</div>
+              <div class="review-item-name">${escapeHtml(review.itemName || "Unknown Item")}</div>
               <div class="review-rating-display">
                 <div class="stars">${stars}</div>
-                <span>${review.rating}/5</span>
+                <span>${review.rating || 0}/5</span>
               </div>
             </div>
           </div>
-          <div class="review-text">${escapeHtml(review.text)}</div>
+          <div class="review-text">${escapeHtml(review.text || "")}</div>
           <div class="review-date">${date}</div>
         </article>
       `;
@@ -1356,7 +1474,21 @@ function closeManageReviewsModal() {
 
 async function renderManageReviewsList() {
   if (!els.manageReviewsList) return;
-  const reviews = await loadReviews();
+  
+  // Load from localStorage directly (reliable source)
+  const saved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
+  let reviews = [];
+  if (saved) {
+    try {
+      reviews = JSON.parse(saved) || [];
+      if (!Array.isArray(reviews)) {
+        reviews = [];
+      }
+    } catch (e) {
+      console.error("Failed to parse reviews for manage list:", e);
+      reviews = [];
+    }
+  }
 
   if (!reviews.length) {
     els.manageReviewsList.innerHTML =
@@ -1365,19 +1497,21 @@ async function renderManageReviewsList() {
   }
 
   els.manageReviewsList.innerHTML = reviews
-    .sort((a, b) => b.timestamp - a.timestamp)
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
     .map((review) => {
-      const date = new Date(review.timestamp).toLocaleString();
+      const date = review.timestamp 
+        ? new Date(review.timestamp).toLocaleString()
+        : "Recently";
       return `
         <article class="manage-review-item">
           <header>
             <div>
-              <strong>${escapeHtml(review.reviewerName)}</strong>
-              <div>${escapeHtml(review.itemName)}</div>
+              <strong>${escapeHtml(review.reviewerName || "Anonymous")}</strong>
+              <div>${escapeHtml(review.itemName || "Unknown Item")}</div>
             </div>
-            <span>${review.rating}/5</span>
+            <span>${review.rating || 0}/5</span>
           </header>
-          <p>${escapeHtml(review.text)}</p>
+          <p>${escapeHtml(review.text || "")}</p>
           <small>${date}</small>
           <button class="btn ghost" data-action="delete-review" data-id="${review.id}">
             Remove Review
@@ -1398,9 +1532,44 @@ async function renderManageReviewsList() {
 
 async function deleteReview(id) {
   if (!id) return;
-  const reviews = (await loadReviews()).filter((review) => review.id !== id);
-  await apiDelete(`/reviews?id=${encodeURIComponent(id)}`, () => null);
-  await saveReviews(reviews);
+  
+  // Load from localStorage (reliable source)
+  const saved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
+  let reviews = [];
+  if (saved) {
+    try {
+      reviews = JSON.parse(saved) || [];
+      if (!Array.isArray(reviews)) {
+        reviews = [];
+      }
+    } catch (e) {
+      console.error("Failed to parse reviews for deletion:", e);
+      reviews = [];
+    }
+  }
+  
+  // Remove the review
+  reviews = reviews.filter((review) => review.id !== id);
+  
+  // Save immediately to localStorage (reliable storage)
+  try {
+    localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
+    console.log("Review deleted from localStorage");
+  } catch (e) {
+    console.error("Failed to delete review from localStorage:", e);
+    alert("Error: Could not delete review. Please try again.");
+    return;
+  }
+  
+  // Try to sync deletion to backend in background (non-blocking)
+  apiDelete(`/reviews?id=${encodeURIComponent(id)}`, () => {
+    console.warn("Backend deletion sync failed, but review is deleted locally");
+    return null;
+  }).catch(err => {
+    console.warn("Background backend deletion sync failed (review is still deleted locally):", err);
+  });
+  
+  // Update UI immediately
   renderReviews();
   renderManageReviewsList();
 }
