@@ -2,7 +2,6 @@ const STORAGE_KEYS = {
   // Kept for graceful fallback if backend is not reachable
   MENU: "restora_menu",
   REVIEWS: "restora_reviews",
-  RESERVATIONS: "restora_reservations",
 };
 
 // Use a relative API base so it works from any host (localhost or LAN IP)
@@ -206,28 +205,6 @@ const els = {
   profileAvatarInitials: document.querySelector("#profileAvatarInitials"),
   profileCancelBtn: document.querySelector("#profileCancelBtn"),
   closeProfileModalBtn: document.querySelector("#closeProfileModalBtn"),
-  // Reservation action modals
-  rejectReservationModal: document.querySelector("#rejectReservationModal"),
-  approveReservationModal: document.querySelector("#approveReservationModal"),
-  closeRejectModalBtn: document.querySelector("#closeRejectModalBtn"),
-  closeApproveModalBtn: document.querySelector("#closeApproveModalBtn"),
-  cancelRejectBtn: document.querySelector("#cancelRejectBtn"),
-  cancelApproveBtn: document.querySelector("#cancelApproveBtn"),
-  confirmRejectBtn: document.querySelector("#confirmRejectBtn"),
-  confirmApproveBtn: document.querySelector("#confirmApproveBtn"),
-  // Reservations
-  reservationForm: document.querySelector("#reservationForm"),
-  resName: document.querySelector("#resName"),
-  resPhone: document.querySelector("#resPhone"),
-  resGuests: document.querySelector("#resGuests"),
-  resDate: document.querySelector("#resDate"),
-  resTime: document.querySelector("#resTime"),
-  resOccasion: document.querySelector("#resOccasion"),
-  resNotes: document.querySelector("#resNotes"),
-  reservationMessage: document.querySelector("#reservationMessage"),
-  adminReservationsPanel: document.querySelector("#adminReservationsPanel"),
-  adminReservationsList: document.querySelector("#adminReservationsList"),
-  clearReservationsBtn: document.querySelector("#clearReservationsBtn"),
 };
 
 const printRoot = document.createElement("div");
@@ -306,61 +283,6 @@ function applyUserToUI() {
   }
 }
 
-async function loadReservations() {
-  // 1) Instant local data
-  const raw = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
-  let local = [];
-  if (raw) {
-    try {
-      local = JSON.parse(raw) || [];
-      if (!Array.isArray(local)) {
-        local = [];
-      }
-    } catch {
-      local = [];
-    }
-  }
-
-  // 2) Background refresh from backend - use backend as source of truth for deletions
-  apiGet("/reservations", () => null).then((serverData) => {
-    if (Array.isArray(serverData)) {
-      // Backend is source of truth - sync deletions
-      localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(serverData));
-      // If admin view is visible, re-render with fresh data
-      if (isAdmin()) {
-        renderAdminReservations();
-      }
-    }
-  }).catch(err => {
-    console.warn("Reservation sync failed (using local data):", err);
-  });
-
-  return local;
-}
-
-async function saveReservation(reservation) {
-  // Save to backend first for multi-device sync
-  await apiPost("/reservations", reservation, () => {
-    console.warn("Backend reservation save failed");
-    return null;
-  });
-  
-  // Also save to local storage for reliability
-  const saved = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
-  let local = [];
-  if (saved) {
-    try {
-      local = JSON.parse(saved) || [];
-      if (!Array.isArray(local)) {
-        local = [];
-      }
-    } catch {
-      local = [];
-    }
-  }
-  local.push(reservation);
-  localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(local));
-}
 
 // Initialize - hide manage button by default, then check admin status
 if (els.manageBtn) {
@@ -368,9 +290,6 @@ if (els.manageBtn) {
 }
 if (els.manageReviewsBtn) {
   els.manageReviewsBtn.style.display = "none";
-}
-if (els.adminReservationsPanel) {
-  els.adminReservationsPanel.style.display = "none";
 }
 
 // Normalize admin flag once on load – if unset, default to "false"
@@ -407,15 +326,6 @@ try {
       console.warn("Periodic review sync failed:", err);
     });
     
-    // Sync reservations (if admin)
-    if (isAdmin()) {
-      loadReservations().then(() => {
-        renderAdminReservations();
-      }).catch(err => {
-        console.warn("Periodic reservation sync failed:", err);
-      });
-    }
-    
     // Sync menu
     loadMenu().then((menuData) => {
       if (JSON.stringify(state.menu.map(m => m.id)) !== JSON.stringify(menuData.map(m => m.id))) {
@@ -442,14 +352,6 @@ try {
           console.warn("Visibility change review sync failed:", err);
         });
         
-        if (isAdmin()) {
-          loadReservations().then(() => {
-            renderAdminReservations();
-          }).catch(err => {
-            console.warn("Visibility change reservation sync failed:", err);
-          });
-        }
-        
         loadMenu().then((menuData) => {
           if (JSON.stringify(state.menu.map(m => m.id)) !== JSON.stringify(menuData.map(m => m.id))) {
             state.menu = menuData;
@@ -473,14 +375,6 @@ try {
       loadReviews().catch(err => {
         console.warn("Focus review sync failed:", err);
       });
-      
-      if (isAdmin()) {
-        loadReservations().then(() => {
-          renderAdminReservations();
-        }).catch(err => {
-          console.warn("Focus reservation sync failed:", err);
-        });
-      }
       
       loadMenu().then((menuData) => {
         if (JSON.stringify(state.menu.map(m => m.id)) !== JSON.stringify(menuData.map(m => m.id))) {
@@ -741,59 +635,6 @@ els.payNowBtn.addEventListener("click", handlePayment);
 els.printBillBtn.addEventListener("click", () => {
   window.print();
 });
-
-if (els.reservationForm) {
-  els.reservationForm.addEventListener("submit", async (evt) => {
-    evt.preventDefault();
-    if (!els.resName || !els.resPhone || !els.resGuests || !els.resDate || !els.resTime) {
-      alert("Reservation form is not ready. Please refresh the page.");
-      return;
-    }
-    const user = getCurrentUser();
-    const reservation = {
-      id: createId(),
-      name: els.resName.value.trim(),
-      phone: els.resPhone.value.trim(),
-      guests: Number(els.resGuests.value || 0),
-      date: els.resDate.value,
-      time: els.resTime.value,
-      occasion: els.resOccasion ? els.resOccasion.value.trim() : "",
-      notes: els.resNotes ? els.resNotes.value.trim() : "",
-      userEmail: user?.email || null,
-      createdAt: Date.now(),
-      status: "pending",
-    };
-
-    if (!reservation.name || !reservation.phone || !reservation.guests || !reservation.date || !reservation.time) {
-      alert("Please fill in all required reservation details.");
-      return;
-    }
-
-    await saveReservation(reservation);
-
-    // Refresh admin view if an admin is currently logged in
-    if (isAdmin()) {
-      renderAdminReservations();
-    }
-
-    if (els.reservationMessage) {
-      els.reservationMessage.textContent =
-        "Your table has been reserved. Our team will be ready to welcome you.";
-      els.reservationMessage.classList.remove("hidden");
-    }
-
-    // Keep name prefilled for convenience, reset others
-    const nameValue = els.resName.value;
-    els.reservationForm.reset();
-    els.resName.value = nameValue;
-  });
-
-  // Prefill reservation name from current user if available
-  const currentUser = getCurrentUser();
-  if (currentUser && els.resName && !els.resName.value) {
-    els.resName.value = currentUser.name || "";
-  }
-}
 
 async function loadMenu() {
   // 1) Instant local/default menu
@@ -1114,229 +955,6 @@ function populatePrintArea(entries, total) {
   printRoot.appendChild(clone);
 }
 
-async function renderAdminReservations() {
-  if (!els.adminReservationsPanel || !els.adminReservationsList) return;
-
-  const reservations = await loadReservations();
-  if (!reservations.length) {
-    els.adminReservationsList.innerHTML =
-      '<p class="empty-state">No reservations received yet.</p>';
-    return;
-  }
-
-  const sorted = [...reservations].sort(
-    (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
-  );
-
-  els.adminReservationsList.innerHTML = sorted
-    .map((res) => {
-      const status = res.status || "pending";
-      const created = res.createdAt
-        ? new Date(res.createdAt).toLocaleString()
-        : "–";
-      const dateTime = res.date && res.time ? `${res.date} · ${res.time}` : "–";
-
-      const statusLabel =
-        status === "approved"
-          ? "Approved"
-          : status === "rejected"
-          ? "Rejected"
-          : "Pending";
-
-      const actionsHtml =
-        status === "rejected"
-          ? `<button class="btn ghost small-btn" data-action="mark-pending" data-id="${res.id}">Reopen</button>`
-          : `
-              <button class="btn ghost small-btn" data-action="reject" data-id="${res.id}">Reject</button>
-              ${
-                status === "pending"
-                  ? `<button class="btn primary small-btn" data-action="approve" data-id="${res.id}">Approve</button>`
-                  : ""
-              }
-            `;
-
-      return `
-        <article class="admin-res-card">
-          <header class="admin-res-header">
-            <div>
-              <h3>${res.name || "Guest"}</h3>
-              <p>${res.phone || "No phone"} · ${dateTime}</p>
-            </div>
-            <span class="res-status res-status--${status}">${statusLabel}</span>
-          </header>
-          <div class="admin-res-body">
-            <p><strong>Guests:</strong> ${res.guests || 0}</p>
-            ${
-              res.occasion
-                ? `<p><strong>Occasion:</strong> ${res.occasion}</p>`
-                : ""
-            }
-            ${
-              res.notes
-                ? `<p><strong>Notes:</strong> ${res.notes}</p>`
-                : ""
-            }
-            ${
-              res.userEmail
-                ? `<p><strong>User Email:</strong> ${res.userEmail}</p>`
-                : ""
-            }
-          </div>
-          <footer class="admin-res-footer">
-            <span class="admin-res-created">Requested: ${created}</span>
-            <div class="admin-res-actions">
-              ${actionsHtml}
-            </div>
-          </footer>
-        </article>
-      `;
-    })
-    .join("");
-
-  els.adminReservationsList
-    .querySelectorAll("[data-action]")
-    .forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.dataset.id;
-        const action = btn.dataset.action;
-        if (!id || !action) return;
-
-        if (action === "approve") {
-          openApproveReservationModal(id);
-        } else if (action === "reject") {
-          openRejectReservationModal(id);
-        } else if (action === "mark-pending") {
-          updateReservationStatus(id, "pending");
-        }
-      });
-    });
-}
-
-async function clearAllReservations() {
-  if (!confirm("Clear all reservations? This cannot be undone.")) return;
-  try {
-    await apiDelete("/reservations", () => null);
-  } catch (e) {
-    console.warn("Failed to clear reservations from backend", e);
-  }
-  // Also clear local cache for snappy UI
-  localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify([]));
-  renderAdminReservations();
-}
-
-async function updateReservationStatus(id, status) {
-  // Update backend first for multi-device sync
-  await apiPatch(`/reservations?id=${encodeURIComponent(id)}`, { status }, () => {
-    console.warn("Backend reservation update failed");
-    return null;
-  });
-  
-  // Then update local storage
-  const reservations = await loadReservations();
-  const idx = reservations.findIndex((r) => r.id === id);
-  if (idx === -1) return;
-
-  reservations[idx] = {
-    ...reservations[idx],
-    status,
-  };
-  localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(reservations));
-  
-  // Refresh from backend to ensure sync
-  setTimeout(() => {
-    loadReservations().then(() => {
-      renderAdminReservations();
-    });
-  }, 300);
-  
-  renderAdminReservations();
-}
-
-function openRejectReservationModal(id) {
-  if (!els.rejectReservationModal) return;
-  
-  // Store the reservation ID for confirmation
-  els.confirmRejectBtn.dataset.reservationId = id;
-  els.rejectReservationModal.classList.remove("hidden");
-}
-
-function closeRejectReservationModal() {
-  if (els.rejectReservationModal) {
-    els.rejectReservationModal.classList.add("hidden");
-  }
-}
-
-function openApproveReservationModal(id) {
-  if (!els.approveReservationModal) return;
-  
-  // Store the reservation ID for confirmation
-  els.confirmApproveBtn.dataset.reservationId = id;
-  els.approveReservationModal.classList.remove("hidden");
-}
-
-function closeApproveReservationModal() {
-  if (els.approveReservationModal) {
-    els.approveReservationModal.classList.add("hidden");
-  }
-}
-
-// Set up event listeners for reservation action modals
-if (els.closeRejectModalBtn) {
-  els.closeRejectModalBtn.addEventListener("click", closeRejectReservationModal);
-}
-if (els.cancelRejectBtn) {
-  els.cancelRejectBtn.addEventListener("click", closeRejectReservationModal);
-}
-if (els.confirmRejectBtn) {
-  els.confirmRejectBtn.addEventListener("click", () => {
-    const id = els.confirmRejectBtn.dataset.reservationId;
-    if (id) {
-      updateReservationStatus(id, "rejected");
-      closeRejectReservationModal();
-    }
-  });
-}
-if (els.rejectReservationModal) {
-  els.rejectReservationModal.addEventListener("click", (evt) => {
-    if (evt.target === els.rejectReservationModal) {
-      closeRejectReservationModal();
-    }
-  });
-}
-
-if (els.closeApproveModalBtn) {
-  els.closeApproveModalBtn.addEventListener("click", closeApproveReservationModal);
-}
-if (els.cancelApproveBtn) {
-  els.cancelApproveBtn.addEventListener("click", closeApproveReservationModal);
-}
-if (els.confirmApproveBtn) {
-  els.confirmApproveBtn.addEventListener("click", () => {
-    const id = els.confirmApproveBtn.dataset.reservationId;
-    if (id) {
-      updateReservationStatus(id, "approved");
-      closeApproveReservationModal();
-    }
-  });
-}
-if (els.approveReservationModal) {
-  els.approveReservationModal.addEventListener("click", (evt) => {
-    if (evt.target === els.approveReservationModal) {
-      closeApproveReservationModal();
-    }
-  });
-}
-
-// Clear all reservations button (admin only)
-if (els.clearReservationsBtn) {
-  els.clearReservationsBtn.addEventListener("click", () => {
-    if (!isAdmin()) {
-      alert("Only admins can clear all reservations.");
-      return;
-    }
-    clearAllReservations();
-  });
-}
 
 function checkAdminStatus() {
   if (!els.manageBtn) {
@@ -1368,17 +986,10 @@ function checkAdminStatus() {
     if (els.manageReviewsBtn) {
       els.manageReviewsBtn.style.display = "inline-flex";
     }
-    if (els.adminReservationsPanel) {
-      els.adminReservationsPanel.style.display = "block";
-      renderAdminReservations();
-    }
   } else {
     els.manageBtn.style.display = "none";
     if (els.manageReviewsBtn) {
       els.manageReviewsBtn.style.display = "none";
-    }
-    if (els.adminReservationsPanel) {
-      els.adminReservationsPanel.style.display = "none";
     }
   }
   

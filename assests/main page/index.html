@@ -111,62 +111,6 @@
 
     </main>
 
-    <section id="adminReservationsPanel" class="panel admin-reservations-panel container-lg">
-      <h2>Admin · Reservations</h2>
-      <p class="admin-res-intro">
-        Private view for Restora staff. Review, confirm or reject upcoming reservations with one click.
-      </p>
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <span class="text-muted small">Today’s reservations overview</span>
-        <button id="clearReservationsBtn" class="btn ghost small-btn">Clear All Reservations</button>
-      </div>
-      <div id="adminReservationsList" class="admin-reservations-list">
-        <p class="empty-state">No reservations received yet.</p>
-      </div>
-    </section>
-
-    <section class="panel reservation-panel container-lg">
-      <h2>Reserve a Table</h2>
-      <p class="reservation-intro">
-        Plan your perfect visit to Restora. Share your details and we’ll hold a table for you with our premium service.
-      </p>
-      <form id="reservationForm">
-        <div class="reservation-grid">
-          <label>
-            Full Name
-            <input type="text" id="resName" required placeholder="Your full name" />
-          </label>
-          <label>
-            Phone Number
-            <input type="tel" id="resPhone" required placeholder="Phone number" />
-          </label>
-          <label>
-            Number of Guests
-            <input type="number" id="resGuests" min="1" max="20" required />
-          </label>
-          <label>
-            Date
-            <input type="date" id="resDate" required />
-          </label>
-          <label>
-            Time
-            <input type="time" id="resTime" required />
-          </label>
-          <label>
-            Occasion (optional)
-            <input type="text" id="resOccasion" placeholder="Birthday, Anniversary, Business..." />
-          </label>
-        </div>
-        <label>
-          Special Requests
-          <textarea id="resNotes" rows="3" placeholder="Allergies, seating preference, surprise setup..."></textarea>
-        </label>
-        <div class="reservation-actions">
-          <button type="submit" class="btn primary">Reserve Table</button>
-        </div>
-        <p id="reservationMessage" class="reservation-message hidden"></p>
-      </form>
-    </section>
 
     <section class="panel reviews-panel container-lg">
         <div class="reviews-header">
@@ -300,37 +244,6 @@
       </div>
     </section>
 
-    <section id="rejectReservationModal" class="modal hidden">
-      <div class="modal-content reservation-action-modal">
-        <header>
-          <h3>Reject Reservation</h3>
-          <button id="closeRejectModalBtn" class="icon-btn" aria-label="Close reject modal">✕</button>
-        </header>
-        <div class="reservation-action-message">
-          <p>Are you sure you want to reject this reservation request? The guest will lose this held table.</p>
-        </div>
-        <div class="form-actions">
-          <button type="button" id="cancelRejectBtn" class="btn ghost">Cancel</button>
-          <button type="button" id="confirmRejectBtn" class="btn primary">Confirm Rejection</button>
-        </div>
-      </div>
-    </section>
-
-    <section id="approveReservationModal" class="modal hidden">
-      <div class="modal-content reservation-action-modal">
-        <header>
-          <h3>Approve Reservation</h3>
-          <button id="closeApproveModalBtn" class="icon-btn" aria-label="Close approve modal">✕</button>
-        </header>
-        <div class="reservation-action-message">
-          <p>This reservation will be confirmed and the table will be held for the guest.</p>
-        </div>
-        <div class="form-actions">
-          <button type="button" id="cancelApproveBtn" class="btn ghost">Cancel</button>
-          <button type="button" id="confirmApproveBtn" class="btn primary">Confirm Approval</button>
-        </div>
-      </div>
-    </section>
 
     <template id="billTemplate">
       <div class="print-area">
