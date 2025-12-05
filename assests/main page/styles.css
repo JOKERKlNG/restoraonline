@@ -1118,6 +1118,43 @@ textarea:focus-visible {
   margin: 0;
 }
 
+.admin-reservations-header {
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(139, 69, 19, 0.3);
+}
+
+.admin-res-intro {
+  font-size: 0.9rem;
+  color: #cbd5f5;
+  margin-bottom: 0.5rem;
+}
+
+.reservations-stats {
+  font-size: 0.85rem;
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.reservations-stats span {
+  color: #fff;
+  font-size: 1rem;
+}
+
+.delete-reservation-btn {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.8rem;
+  background: rgba(248, 113, 113, 0.15);
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #f97373;
+}
+
+.delete-reservation-btn:hover {
+  background: rgba(248, 113, 113, 0.25);
+  border-color: rgba(248, 113, 113, 0.6);
+  transform: translateY(-1px);
+}
+
 .admin-reservations-list {
   display: flex;
   flex-direction: column;

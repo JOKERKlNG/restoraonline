@@ -223,6 +223,7 @@ const els = {
   adminReservationsModal: document.querySelector("#adminReservationsModal"),
   closeAdminReservationsModalBtn: document.querySelector("#closeAdminReservationsModalBtn"),
   adminReservationsList: document.querySelector("#adminReservationsList"),
+  reservationsCount: document.querySelector("#reservationsCount"),
 };
 
 const printRoot = document.createElement("div");
@@ -1213,6 +1214,38 @@ function closeReservationModal() {
   }
 }
 
+async function deleteReservation(id) {
+  if (!id || !confirm("Are you sure you want to delete this reservation?")) return;
+  
+  // Remove from localStorage
+  const raw = localStorage.getItem(STORAGE_KEYS.RESERVATIONS);
+  let reservations = [];
+  if (raw) {
+    try {
+      reservations = JSON.parse(raw) || [];
+      if (!Array.isArray(reservations)) {
+        reservations = [];
+      }
+    } catch {
+      reservations = [];
+    }
+  }
+  
+  reservations = reservations.filter(r => r.id !== id);
+  localStorage.setItem(STORAGE_KEYS.RESERVATIONS, JSON.stringify(reservations));
+  
+  // Also delete from backend
+  apiDelete(`/reservations?id=${encodeURIComponent(id)}`, () => {
+    console.warn("Backend deletion failed, but deleted locally");
+    return null;
+  }).catch(err => {
+    console.warn("Backend deletion error:", err);
+  });
+  
+  // Refresh the view
+  await renderAdminReservations();
+}
+
 async function renderAdminReservations() {
   if (!els.adminReservationsList) return;
 
@@ -1238,6 +1271,11 @@ async function renderAdminReservations() {
 
   console.log("Rendering reservations:", reservations.length, "found");
 
+  // Update count
+  if (els.reservationsCount) {
+    els.reservationsCount.textContent = reservations.length;
+  }
+
   if (!reservations.length) {
     els.adminReservationsList.innerHTML =
       '<p class="empty-state">No reservations yet.</p>';
@@ -1258,6 +1296,15 @@ async function renderAdminReservations() {
       const guests = res.guests || 0;
       const phone = res.phone || "Not provided";
       const requests = res.requests || res.notes || "None";
+      const status = res.status || "pending";
+      
+      // Status badge styling
+      const statusClass = status === "approved" ? "res-status--approved" : 
+                         status === "rejected" ? "res-status--rejected" : 
+                         "res-status--pending";
+      const statusLabel = status === "approved" ? "Confirmed" : 
+                         status === "rejected" ? "Cancelled" : 
+                         "Pending";
 
       return `
         <article class="admin-res-card">
@@ -1266,6 +1313,7 @@ async function renderAdminReservations() {
               <h3>${escapeHtml(res.name || "Guest")}</h3>
               <p>Date: ${date} · Time: ${time} · Guests: ${guests}</p>
             </div>
+            <span class="res-status ${statusClass}">${statusLabel}</span>
           </header>
           <div class="admin-res-body">
             <p><strong>Phone:</strong> ${escapeHtml(phone)}</p>
@@ -1274,11 +1322,24 @@ async function renderAdminReservations() {
           </div>
           <footer class="admin-res-footer">
             <span class="admin-res-created">Reserved: ${created}</span>
+            <button class="btn ghost small-btn delete-reservation-btn" data-id="${res.id}" title="Delete reservation">
+              Delete
+            </button>
           </footer>
         </article>
       `;
     })
     .join("");
+  
+  // Add event listeners for delete buttons
+  els.adminReservationsList.querySelectorAll(".delete-reservation-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      if (id) {
+        deleteReservation(id);
+      }
+    });
+  });
 }
 
 async function openAdminReservationsModal() {
